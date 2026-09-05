@@ -161,12 +161,24 @@ fn sz? WriteAttrs.to_format(
 {
   sz? acc;
 
-  if (self.if_condition != "") {
-    acc += format.printf(" @if(%s)", self.if_condition);
-  }
-  if (self.private) {
-    acc += format.printf(" @private");
-  }
+  $foreach $f : WriteAttrs::members:
+    $assert $f.has_tag("attr") : "every WriteAttrs field must carry an \"attr\" tag";
+    String $attr = $f.get_tag("attr");
+
+    var $Type = $Typeof(self.$f);
+    $switch $Type:
+      $case String:
+        if (self.$f != "") {
+          acc += format.printf(" %s(%s)", $attr, self.$f);
+        }
+      $case bool:
+        if (self.$f) {
+          acc += format.printf(" %s", $attr);
+        }
+      $default:
+        $error "Unexpected type in WriteAttrs fields";
+    $endswitch
+  $endforeach
 
   return acc;
 }
