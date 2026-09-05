@@ -351,6 +351,17 @@ static Type *find_typedef(Token *tok) {
     VarScope *sc = find_var(tok);
     if (sc)
       return sc->type_def;
+
+    // [bindgen] C++ allows a struct/union/enum tag to be used as a
+    // type name without the keyword, and headers written to compile
+    // as both rely on it (cute_tiled.h: `cute_tiled_chunk_t* next;`
+    // inside the struct that declares the tag). Only consulted when
+    // the name is not bound as a variable, so C code that reuses a
+    // tag name for an object (`struct t {..}; int t;`) still wins.
+    Type *tag = find_tag(tok);
+    if (tag && (tag->kind == TY_STRUCT || tag->kind == TY_UNION ||
+                tag->kind == TY_ENUM))
+      return tag;
   }
   return NULL;
 }
@@ -1543,7 +1554,21 @@ static Node *asm_stmt(Token **rest, Token *tok) {
   if (tok->kind != TK_STR || tok->ty->base->kind != TY_CHAR)
     error_tok(tok, "expected string literal");
   node->asm_str = tok->str;
-  *rest = skip(tok->next, ")");
+  tok = tok->next;
+
+  // [bindgen] GNU extended asm: skip the output/input/clobber clauses.
+  // We never generate code from headers, and system headers use it
+  // (libkern/_OSByteOrder.h) in inline functions we only need to parse.
+  if (equal(tok, ":")) {
+    int depth = 0;
+    while (!(depth == 0 && equal(tok, ")"))) {
+      if (equal(tok, "(")) depth++;
+      else if (equal(tok, ")")) depth--;
+      tok = tok->next;
+    }
+  }
+
+  *rest = skip(tok, ")");
   return node;
 }
 
@@ -1723,7 +1748,7 @@ static Node *stmt(Token **rest, Token *tok) {
     return node;
   }
 
-  if (equal(tok, "asm"))
+  if (equal(tok, "asm") || equal(tok, "__asm__"))
     return asm_stmt(rest, tok);
 
   if (equal(tok, "goto")) {
@@ -2684,8 +2709,25 @@ static Type *struct_union_decl(Token **rest, Token *tok) {
 
   tok = skip(tok, "{");
 
+  // [bindgen] Make the tag visible before parsing members, so a
+  // member can refer to the struct being defined by its bare tag
+  // (a C++ism; see find_typedef). Only a pointer to it can appear,
+  // so an incomplete type is enough.
+  bool pushed_early = false;
+  if (tag && !find_tag(tag)) {
+    ty->size = -1;
+    push_tag_scope(tag, ty);
+    pushed_early = true;
+  }
+
   // Construct a struct object.
   struct_members(&tok, tok, ty);
+
+  // The -1 above marked the type incomplete while its own members were
+  // being parsed; struct_decl/union_decl use size < 0 as "incomplete
+  // and skip layout", so clear it now that the members are known.
+  if (pushed_early)
+    ty->size = 0;
   *rest = attribute_list(tok, ty);
 
   if (tag) {

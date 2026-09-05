@@ -60,7 +60,7 @@ index a83934d..846c68a 100644
 +  return ent->key && ent->key != TOMBSTONE;
 +}
 diff --git a/parse.c b/parse.c
-index 6acaeb8..a7f8f20 100644
+index 6acaeb8..aa67186 100644
 --- a/parse.c
 +++ b/parse.c
 @@ -154,6 +154,7 @@ static Node *primary(Token **rest, Token *tok);
@@ -71,7 +71,25 @@ index 6acaeb8..a7f8f20 100644
  static Token *global_variable(Token *tok, Type *basety, VarAttr *attr);
  
  static int align_down(int n, int align) {
-@@ -481,6 +482,22 @@ static Type *declspec(Token **rest, Token *tok, VarAttr *attr) {
+@@ -350,6 +351,17 @@ static Type *find_typedef(Token *tok) {
+     VarScope *sc = find_var(tok);
+     if (sc)
+       return sc->type_def;
++
++    // [bindgen] C++ allows a struct/union/enum tag to be used as a
++    // type name without the keyword, and headers written to compile
++    // as both rely on it (cute_tiled.h: `cute_tiled_chunk_t* next;`
++    // inside the struct that declares the tag). Only consulted when
++    // the name is not bound as a variable, so C code that reuses a
++    // tag name for an object (`struct t {..}; int t;`) still wins.
++    Type *tag = find_tag(tok);
++    if (tag && (tag->kind == TY_STRUCT || tag->kind == TY_UNION ||
++                tag->kind == TY_ENUM))
++      return tag;
+   }
+   return NULL;
+ }
+@@ -481,6 +493,22 @@ static Type *declspec(Token **rest, Token *tok, VarAttr *attr) {
        continue;
      }
  
@@ -94,7 +112,7 @@ index 6acaeb8..a7f8f20 100644
      // Handle built-in types.
      if (equal(tok, "void"))
        counter += VOID;
-@@ -1504,6 +1521,7 @@ static bool is_typename(Token *tok) {
+@@ -1504,6 +1532,7 @@ static bool is_typename(Token *tok) {
        "const", "volatile", "auto", "register", "restrict", "__restrict",
        "__restrict__", "_Noreturn", "float", "double", "typeof", "inline",
        "_Thread_local", "__thread", "_Atomic",
@@ -102,7 +120,39 @@ index 6acaeb8..a7f8f20 100644
      };
  
      for (int i = 0; i < sizeof(kw) / sizeof(*kw); i++)
-@@ -2620,7 +2638,18 @@ static Token *attribute_list(Token *tok, Type *ty) {
+@@ -1525,7 +1554,21 @@ static Node *asm_stmt(Token **rest, Token *tok) {
+   if (tok->kind != TK_STR || tok->ty->base->kind != TY_CHAR)
+     error_tok(tok, "expected string literal");
+   node->asm_str = tok->str;
+-  *rest = skip(tok->next, ")");
++  tok = tok->next;
++
++  // [bindgen] GNU extended asm: skip the output/input/clobber clauses.
++  // We never generate code from headers, and system headers use it
++  // (libkern/_OSByteOrder.h) in inline functions we only need to parse.
++  if (equal(tok, ":")) {
++    int depth = 0;
++    while (!(depth == 0 && equal(tok, ")"))) {
++      if (equal(tok, "(")) depth++;
++      else if (equal(tok, ")")) depth--;
++      tok = tok->next;
++    }
++  }
++
++  *rest = skip(tok, ")");
+   return node;
+ }
+ 
+@@ -1705,7 +1748,7 @@ static Node *stmt(Token **rest, Token *tok) {
+     return node;
+   }
+ 
+-  if (equal(tok, "asm"))
++  if (equal(tok, "asm") || equal(tok, "__asm__"))
+     return asm_stmt(rest, tok);
+ 
+   if (equal(tok, "goto")) {
+@@ -2620,7 +2663,18 @@ static Token *attribute_list(Token *tok, Type *ty) {
          continue;
        }
  
@@ -122,7 +172,33 @@ index 6acaeb8..a7f8f20 100644
      }
  
      tok = skip(tok, ")");
-@@ -3196,8 +3225,29 @@ static void mark_live(Obj *var) {
+@@ -2655,8 +2709,25 @@ static Type *struct_union_decl(Token **rest, Token *tok) {
+ 
+   tok = skip(tok, "{");
+ 
++  // [bindgen] Make the tag visible before parsing members, so a
++  // member can refer to the struct being defined by its bare tag
++  // (a C++ism; see find_typedef). Only a pointer to it can appear,
++  // so an incomplete type is enough.
++  bool pushed_early = false;
++  if (tag && !find_tag(tag)) {
++    ty->size = -1;
++    push_tag_scope(tag, ty);
++    pushed_early = true;
++  }
++
+   // Construct a struct object.
+   struct_members(&tok, tok, ty);
++
++  // The -1 above marked the type incomplete while its own members were
++  // being parsed; struct_decl/union_decl use size < 0 as "incomplete
++  // and skip layout", so clear it now that the members are known.
++  if (pushed_early)
++    ty->size = 0;
+   *rest = attribute_list(tok, ty);
+ 
+   if (tag) {
+@@ -3196,8 +3267,29 @@ static void mark_live(Obj *var) {
    }
  }
  
@@ -152,7 +228,7 @@ index 6acaeb8..a7f8f20 100644
    if (!ty->name)
      error_tok(ty->name_pos, "function name omitted");
    char *name_str = get_ident(ty->name);
-@@ -3270,6 +3320,7 @@ static Token *global_variable(Token *tok, Type *basety, VarAttr *attr) {
+@@ -3270,6 +3362,7 @@ static Token *global_variable(Token *tok, Type *basety, VarAttr *attr) {
      first = false;
  
      Type *ty = declarator(&tok, tok, basety);
@@ -161,7 +237,7 @@ index 6acaeb8..a7f8f20 100644
        error_tok(ty->name_pos, "variable name omitted");
  
 diff --git a/preprocess.c b/preprocess.c
-index 2bef487..86ebf62 100644
+index 2bef487..9ab057b 100644
 --- a/preprocess.c
 +++ b/preprocess.c
 @@ -48,6 +48,7 @@ struct Macro {
@@ -172,7 +248,89 @@ index 2bef487..86ebf62 100644
  };
  
  // `#if` can be nested, so we use a stack to manage nested `#if`s.
-@@ -369,6 +370,7 @@ static void read_macro_definition(Token **rest, Token *tok) {
+@@ -72,6 +73,7 @@ static int include_next_idx;
+ 
+ static Token *preprocess2(Token *tok);
+ static Macro *find_macro(Token *tok);
++static char *read_include_filename(Token **rest, Token *tok, bool *is_dquote); // [bindgen]
+ 
+ static bool is_hash(Token *tok) {
+   return tok->at_bol && equal(tok, "#");
+@@ -268,6 +270,73 @@ static Token *read_const_expr(Token **rest, Token *tok) {
+       continue;
+     }
+ 
++    // [bindgen] __has_include(<foo.h>) / __has_include("foo.h").
++    // Resolved for real: headers use it to decide whether to include
++    // something, and answering 0 for a header that exists changes
++    // which declarations we see.
++    if (tok->kind == TK_IDENT &&
++        (equal(tok, "__has_include") || equal(tok, "__has_include_next"))) {
++      Token *start = tok;
++      tok = skip(tok->next, "(");
++
++      char *filename;
++      bool is_dquote;
++      if (tok->kind == TK_STR) {
++        filename = tok->str;
++        is_dquote = true;
++        tok = tok->next;
++      } else {
++        // <foo/bar.h>: reassemble from the tokens between the angles,
++        // which the lexer split on '/' and '.'.
++        tok = skip(tok, "<");
++        char *start_loc = tok->loc;
++        while (!equal(tok, ">"))
++          tok = tok->next;
++        filename = strndup(start_loc, tok->loc - start_loc);
++        is_dquote = false;
++        tok = tok->next;
++      }
++      tok = skip(tok, ")");
++
++      bool found = is_dquote
++        ? (file_exists(filename) || search_include_paths(filename) != NULL)
++        : search_include_paths(filename) != NULL;
++      cur = cur->next = new_num_token(found ? 1 : 0, start);
++      continue;
++    }
++
++    // [bindgen] Clang's __has_* family. Real headers gate on these
++    // heavily (Apple's secure/_string.h, Availability.h). We answer
++    // 0 for every feature/builtin/attribute query -- the conservative
++    // answer, which selects each header's portable fallback path --
++    // and resolve __has_include for real, since headers use it to
++    // decide whether to include something we would then have to find.
++    if (tok->kind == TK_IDENT &&
++        (equal(tok, "__has_builtin") || equal(tok, "__has_feature") ||
++         equal(tok, "__has_extension") || equal(tok, "__has_attribute") ||
++         equal(tok, "__has_c_attribute") ||
++         equal(tok, "__has_declspec_attribute") ||
++         equal(tok, "__has_cpp_attribute") ||
++         equal(tok, "__is_target_os") || equal(tok, "__is_target_arch") ||
++         equal(tok, "__is_target_vendor") ||
++         equal(tok, "__is_target_environment") ||
++         equal(tok, "__is_target_variant_os") ||
++         equal(tok, "__is_target_variant_environment") ||
++         equal(tok, "__building_module"))) {
++      Token *start = tok;
++      tok = tok->next;
++      if (equal(tok, "(")) {
++        int depth = 0;
++        do {
++          if (equal(tok, "(")) depth++;
++          else if (equal(tok, ")")) depth--;
++          tok = tok->next;
++        } while (depth > 0);
++      }
++      cur = cur->next = new_num_token(0, start);
++      continue;
++    }
++
+     cur = cur->next = tok;
+     tok = tok->next;
+   }
+@@ -369,6 +438,7 @@ static void read_macro_definition(Token **rest, Token *tok) {
    if (tok->kind != TK_IDENT)
      error_tok(tok, "macro name must be an identifier");
    char *name = strndup(tok->loc, tok->len);
@@ -180,7 +338,7 @@ index 2bef487..86ebf62 100644
    tok = tok->next;
  
    if (!tok->has_space && equal(tok, "(")) {
-@@ -379,9 +381,11 @@ static void read_macro_definition(Token **rest, Token *tok) {
+@@ -379,9 +449,11 @@ static void read_macro_definition(Token **rest, Token *tok) {
      Macro *m = add_macro(name, false, copy_line(rest, tok));
      m->params = params;
      m->va_args_name = va_args_name;
@@ -193,7 +351,7 @@ index 2bef487..86ebf62 100644
    }
  }
  
-@@ -979,6 +983,15 @@ static Token *preprocess2(Token *tok) {
+@@ -979,6 +1051,15 @@ static Token *preprocess2(Token *tok) {
      if (equal(tok, "error"))
        error_tok(tok, "error");
  
@@ -209,7 +367,7 @@ index 2bef487..86ebf62 100644
      // `#`-only line is legal. It's called a null directive.
      if (tok->at_bol)
        continue;
-@@ -999,6 +1012,59 @@ void undef_macro(char *name) {
+@@ -999,6 +1080,59 @@ void undef_macro(char *name) {
    hashmap_delete(&macros, name);
  }
  
@@ -269,3 +427,41 @@ index 2bef487..86ebf62 100644
  static Macro *add_builtin(char *name, macro_handler_fn *fn) {
    Macro *m = add_macro(name, true, NULL);
    m->handler = fn;
+@@ -1080,6 +1214,16 @@ void init_macros(void) {
+   define_macro("__STDC_UTF_32__", "1");
+   define_macro("__STDC_VERSION__", "201112L");
+   define_macro("__STDC__", "1");
++
++  // [bindgen] Present ourselves as a GNU-compatible compiler. Apple's
++  // sys/cdefs.h #warning-rejects anything else, and glibc gates large
++  // parts of its headers on __GNUC__.
++  define_macro("__GNUC__", "4");
++  define_macro("__GNUC_MINOR__", "2");
++  // The fortified string/stdio paths need __builtin___*_chk and the
++  // bounds-safety attributes; take the unfortified path instead.
++  define_macro("_FORTIFY_SOURCE", "0");
++
+   define_macro("__USER_LABEL_PREFIX__", "");
+   define_macro("__alignof__", "_Alignof");
+   define_macro("__amd64", "1");
+@@ -1088,6 +1232,7 @@ void init_macros(void) {
+   define_macro("__const__", "const");
+   define_macro("__gnu_linux__", "1");
+   define_macro("__inline__", "inline");
++  define_macro("__inline", "inline"); // [bindgen]
+   define_macro("__linux", "1");
+   define_macro("__linux__", "1");
+   define_macro("__signed__", "signed");
+diff --git a/tokenize.c b/tokenize.c
+index 5c49c02..b245f38 100644
+--- a/tokenize.c
++++ b/tokenize.c
+@@ -166,7 +166,7 @@ static bool is_keyword(Token *tok) {
+       "default", "extern", "_Alignof", "_Alignas", "do", "signed",
+       "unsigned", "const", "volatile", "auto", "register", "restrict",
+       "__restrict", "__restrict__", "_Noreturn", "float", "double",
+-      "typeof", "asm", "_Thread_local", "__thread", "_Atomic",
++      "typeof", "asm", "__asm__", "_Thread_local", "__thread", "_Atomic",
+       "__attribute__",
+     };
+ 

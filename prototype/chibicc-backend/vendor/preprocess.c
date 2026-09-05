@@ -73,6 +73,7 @@ static int include_next_idx;
 
 static Token *preprocess2(Token *tok);
 static Macro *find_macro(Token *tok);
+static char *read_include_filename(Token **rest, Token *tok, bool *is_dquote); // [bindgen]
 
 static bool is_hash(Token *tok) {
   return tok->at_bol && equal(tok, "#");
@@ -266,6 +267,73 @@ static Token *read_const_expr(Token **rest, Token *tok) {
         tok = skip(tok, ")");
 
       cur = cur->next = new_num_token(m ? 1 : 0, start);
+      continue;
+    }
+
+    // [bindgen] __has_include(<foo.h>) / __has_include("foo.h").
+    // Resolved for real: headers use it to decide whether to include
+    // something, and answering 0 for a header that exists changes
+    // which declarations we see.
+    if (tok->kind == TK_IDENT &&
+        (equal(tok, "__has_include") || equal(tok, "__has_include_next"))) {
+      Token *start = tok;
+      tok = skip(tok->next, "(");
+
+      char *filename;
+      bool is_dquote;
+      if (tok->kind == TK_STR) {
+        filename = tok->str;
+        is_dquote = true;
+        tok = tok->next;
+      } else {
+        // <foo/bar.h>: reassemble from the tokens between the angles,
+        // which the lexer split on '/' and '.'.
+        tok = skip(tok, "<");
+        char *start_loc = tok->loc;
+        while (!equal(tok, ">"))
+          tok = tok->next;
+        filename = strndup(start_loc, tok->loc - start_loc);
+        is_dquote = false;
+        tok = tok->next;
+      }
+      tok = skip(tok, ")");
+
+      bool found = is_dquote
+        ? (file_exists(filename) || search_include_paths(filename) != NULL)
+        : search_include_paths(filename) != NULL;
+      cur = cur->next = new_num_token(found ? 1 : 0, start);
+      continue;
+    }
+
+    // [bindgen] Clang's __has_* family. Real headers gate on these
+    // heavily (Apple's secure/_string.h, Availability.h). We answer
+    // 0 for every feature/builtin/attribute query -- the conservative
+    // answer, which selects each header's portable fallback path --
+    // and resolve __has_include for real, since headers use it to
+    // decide whether to include something we would then have to find.
+    if (tok->kind == TK_IDENT &&
+        (equal(tok, "__has_builtin") || equal(tok, "__has_feature") ||
+         equal(tok, "__has_extension") || equal(tok, "__has_attribute") ||
+         equal(tok, "__has_c_attribute") ||
+         equal(tok, "__has_declspec_attribute") ||
+         equal(tok, "__has_cpp_attribute") ||
+         equal(tok, "__is_target_os") || equal(tok, "__is_target_arch") ||
+         equal(tok, "__is_target_vendor") ||
+         equal(tok, "__is_target_environment") ||
+         equal(tok, "__is_target_variant_os") ||
+         equal(tok, "__is_target_variant_environment") ||
+         equal(tok, "__building_module"))) {
+      Token *start = tok;
+      tok = tok->next;
+      if (equal(tok, "(")) {
+        int depth = 0;
+        do {
+          if (equal(tok, "(")) depth++;
+          else if (equal(tok, ")")) depth--;
+          tok = tok->next;
+        } while (depth > 0);
+      }
+      cur = cur->next = new_num_token(0, start);
       continue;
     }
 
@@ -1146,6 +1214,16 @@ void init_macros(void) {
   define_macro("__STDC_UTF_32__", "1");
   define_macro("__STDC_VERSION__", "201112L");
   define_macro("__STDC__", "1");
+
+  // [bindgen] Present ourselves as a GNU-compatible compiler. Apple's
+  // sys/cdefs.h #warning-rejects anything else, and glibc gates large
+  // parts of its headers on __GNUC__.
+  define_macro("__GNUC__", "4");
+  define_macro("__GNUC_MINOR__", "2");
+  // The fortified string/stdio paths need __builtin___*_chk and the
+  // bounds-safety attributes; take the unfortified path instead.
+  define_macro("_FORTIFY_SOURCE", "0");
+
   define_macro("__USER_LABEL_PREFIX__", "");
   define_macro("__alignof__", "_Alignof");
   define_macro("__amd64", "1");
@@ -1154,6 +1232,7 @@ void init_macros(void) {
   define_macro("__const__", "const");
   define_macro("__gnu_linux__", "1");
   define_macro("__inline__", "inline");
+  define_macro("__inline", "inline"); // [bindgen]
   define_macro("__linux", "1");
   define_macro("__linux__", "1");
   define_macro("__signed__", "signed");

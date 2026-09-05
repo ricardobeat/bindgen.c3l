@@ -11,17 +11,21 @@ arm64 into a 207KB binary with no dependencies.
 
 ## Result
 
-**Promising. 15 of the 20 stress libraries parse, after 61 lines of
-patches.** The remaining 5 fail on Apple-specific extensions, not on
-anything structural.
+**All 20 stress libraries parse**, after ~470 lines of patches.
 
 | stage | passes |
 |---|---|
 | unpatched chibicc, SDK headers | 3/20 |
-| + `__builtin_va_list`, attribute skipping, `#warning` | **15/20** |
+| + `__builtin_va_list`, attribute skipping, `#warning` | 15/20 |
+| + `__has_*`/`__is_target_*`, `__has_include`, ext asm, `__inline` | 19/20 |
+| + implicit struct tags | **20/20** |
 
-Note the unpatched 3/20 is the honest baseline; an earlier 17/20
-figure measured only preprocessing, which is not the hard part.
+Struct layout was verified against clang, not assumed: size, alignment,
+bitfield packing and union size all match for a self-referential
+struct, a mixed bitfield struct and a union.
+
+chibicc's own test suite goes 38 pass / 3 fail; those 3 (atomic,
+pragma-once, tls) fail on unpatched upstream too.
 
 ## The patches (`chibicc-bindgen.patch`, 61 added lines)
 
@@ -40,16 +44,33 @@ figure measured only preprocessing, which is not the hard part.
 `-D__GNUC__=4 -D__GNUC_MINOR__=2` is still required so `cdefs.h` takes
 its GNU path. That should become a built-in define.
 
-## Remaining 5 failures
+## The rest of the patches
 
-- `stb_image` — `__header_always_inline` in `_stdio.h`
-- `json`, `stb_ds` — `__has_builtin` / `_Nullable` in `secure/_string.h`
-- `stb_image_write` — `Availability.h`
-- `cute_tiled` — genuinely C++, needs `-x c++` (fails under libclang too)
+4. **`__has_*` family** — `__has_builtin`, `__has_feature`,
+   `__has_attribute`, `__has_extension` and friends answer 0, which
+   selects each header's portable fallback path. `__has_include` is
+   resolved for real, since answering 0 for a header that exists
+   changes which declarations we see.
+5. **`__is_target_*`** — clang's target predicates, used by
+   AvailabilityInternalLegacy.h. Same treatment as `__has_*`.
+6. **GNU extended asm** — `asm("..." : outputs : inputs : clobbers)`.
+   The clauses are skipped; we never generate code from a header.
+   `__asm__` also had to become a keyword, since aliasing it to `asm`
+   via a macro collides with its use as a symbol-rename attribute.
+7. **`_FORTIFY_SOURCE=0`, `__GNUC__=4`** as built-in defines. The
+   fortified string/stdio paths need `__builtin___*_chk` and the
+   bounds-safety attributes; `__GNUC__` stops cdefs.h rejecting us.
+8. **`__inline`** aliased to `inline` (only `__inline__` was).
+9. **Implicit struct tags** — C++ lets a struct tag be used as a type
+   name without the keyword, and cute_tiled.h relies on it *inside*
+   the struct that declares the tag. Needed two changes: consult tags
+   in `find_typedef` (only when the name is not bound as a variable,
+   or `struct t {..}; int t;` breaks), and push the tag before parsing
+   members so the self-reference resolves.
 
-So 4 of 5 are Apple extension long-tail. Each is individually small;
-the set is open-ended, which is the standing argument against small C
-frontends.
+Two regressions were caught by chibicc's own tests and fixed: the
+variable-vs-tag shadowing above, and an incomplete-type marker that
+leaked past member parsing and suppressed struct layout.
 
 ## Macro introspection (resolved)
 
@@ -103,10 +124,12 @@ The semantic layer is a genuine fit: `Type.size`/`align`,
 exactly the libclang facilities this tool depends on, and they are the
 part a tree-sitter approach could not supply.
 
-The risk is unchanged from the outset but is now quantified: extension
-coverage. 61 lines bought 12 headers; the next 4 will each cost their
-own patch, and new SDK releases can add more. That is maintenance the
-libclang backend does not carry.
+On extension coverage: this went better than expected. ~470 lines took
+3/20 to 20/20, and most of it is mechanical (answer 0, skip tokens).
+The caveat is that this is one SDK on one platform; Linux glibc and
+Windows headers will surface their own set, and the patch is now large
+enough that tracking upstream chibicc is not realistic. Upstream
+tracking is explicitly not a goal here.
 
 Recommendation: continue. The macro story checked out, which was the
 main open risk. The remaining work is mechanical (AST dump + C3
