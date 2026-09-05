@@ -9,6 +9,7 @@ cd "$(dirname "$0")/../.."
 work="${1:-build/stress-run}"
 mkdir -p "$work/headers" "$work/out"
 
+tools/build.sh || exit 1
 c3c build stress || exit 1
 
 fail=0
