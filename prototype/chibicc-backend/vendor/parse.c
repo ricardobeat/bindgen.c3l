@@ -25,6 +25,7 @@ typedef struct {
   Type *type_def;
   Type *enum_ty;
   int enum_val;
+  Token *decl_tok; // [bindgen] where this name was introduced
 } VarScope;
 
 // Represents a block scope.
@@ -253,8 +254,11 @@ Node *new_cast(Node *expr, Type *ty) {
   return node;
 }
 
+static Token *cur_decl_tok; // [bindgen] set by callers of push_scope
+
 static VarScope *push_scope(char *name) {
   VarScope *sc = calloc(1, sizeof(VarScope));
+  sc->decl_tok = cur_decl_tok; // [bindgen]
   hashmap_put(&scope->vars, name, sc);
   return sc;
 }
@@ -797,6 +801,8 @@ static Type *enum_specifier(Token **rest, Token *tok) {
   }
 
   tok = skip(tok, "{");
+  if (tag)
+    ty->tag_tok = tag; // [bindgen]
 
   // Read an enum-list.
   int i = 0;
@@ -806,12 +812,15 @@ static Type *enum_specifier(Token **rest, Token *tok) {
       tok = skip(tok, ",");
 
     char *name = get_ident(tok);
+    Token *name_tok_bg = tok; // [bindgen]
     tok = tok->next;
 
     if (equal(tok, "="))
       val = const_expr(&tok, tok->next);
 
+    cur_decl_tok = name_tok_bg; // [bindgen]
     VarScope *sc = push_scope(name);
+    cur_decl_tok = NULL;
     sc->enum_ty = ty;
     sc->enum_val = val++;
   }
@@ -2703,6 +2712,7 @@ static Type *struct_union_decl(Token **rest, Token *tok) {
       return ty2;
 
     ty->size = -1;
+    ty->tag_tok = tag; // [bindgen]
     push_tag_scope(tag, ty);
     return ty;
   }
@@ -2713,6 +2723,9 @@ static Type *struct_union_decl(Token **rest, Token *tok) {
   // member can refer to the struct being defined by its bare tag
   // (a C++ism; see find_typedef). Only a pointer to it can appear,
   // so an incomplete type is enough.
+  if (tag)
+    ty->tag_tok = tag; // [bindgen]
+
   bool pushed_early = false;
   if (tag && !find_tag(tag)) {
     ty->size = -1;
@@ -3209,7 +3222,9 @@ static Token *parse_typedef(Token *tok, Type *basety) {
     Type *ty = declarator(&tok, tok, basety);
     if (!ty->name)
       error_tok(ty->name_pos, "typedef name omitted");
+    cur_decl_tok = ty->name; // [bindgen]
     push_scope(get_ident(ty->name))->type_def = ty;
+    cur_decl_tok = NULL;
   }
   return tok;
 }
@@ -3427,6 +3442,58 @@ static void declare_builtin_functions(void) {
 }
 
 // program = (typedef | function-definition | global-variable)*
+// [bindgen] File-scope introspection. See chibicc.h.
+// `scope` is back at file scope once parse() has returned.
+
+int file_scope_typedef_count(void) {
+  int n = 0;
+  for (int i = 0; i < scope->vars.capacity; i++)
+    if (hashmap_entry_live(&scope->vars.buckets[i]))
+      n++;
+  return n;
+}
+
+int file_scope_typedefs(ScopeEntry *out, int cap) {
+  int n = 0;
+  for (int i = 0; i < scope->vars.capacity && n < cap; i++) {
+    HashEntry *e = &scope->vars.buckets[i];
+    if (!hashmap_entry_live(e))
+      continue;
+    VarScope *sc = e->val;
+    out[n].name = strndup(e->key, e->keylen);
+    out[n].type_def = sc->type_def;
+    out[n].enum_ty = sc->enum_ty;
+    out[n].enum_val = sc->enum_val;
+    out[n].filename = sc->decl_tok ? sc->decl_tok->filename : NULL;
+    n++;
+  }
+  return n;
+}
+
+int file_scope_tag_count(void) {
+  int n = 0;
+  for (int i = 0; i < scope->tags.capacity; i++)
+    if (hashmap_entry_live(&scope->tags.buckets[i]))
+      n++;
+  return n;
+}
+
+int file_scope_tags(ScopeEntry *out, int cap) {
+  int n = 0;
+  for (int i = 0; i < scope->tags.capacity && n < cap; i++) {
+    HashEntry *e = &scope->tags.buckets[i];
+    if (!hashmap_entry_live(e))
+      continue;
+    out[n].name = strndup(e->key, e->keylen);
+    out[n].type_def = e->val;
+    out[n].enum_ty = NULL;
+    out[n].enum_val = 0;
+    out[n].filename = NULL;
+    n++;
+  }
+  return n;
+}
+
 Obj *parse(Token *tok) {
   declare_builtin_functions();
   globals = NULL;

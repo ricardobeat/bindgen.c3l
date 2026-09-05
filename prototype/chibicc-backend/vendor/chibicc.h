@@ -112,6 +112,7 @@ Token *tokenize_file(char *filename);
 // preprocess.c
 //
 
+char *builtin_header(char *name); // [bindgen] builtin_headers.c
 char *search_include_paths(char *filename);
 void init_macros(void);
 void define_macro(char *name, char *buf);
@@ -321,6 +322,22 @@ Node *new_cast(Node *expr, Type *ty);
 int64_t const_expr(Token **rest, Token *tok);
 Obj *parse(Token *tok);
 
+// [bindgen] File-scope introspection, valid after parse() returns.
+// A binding generator needs typedefs and struct/union/enum tags, which
+// live in scope rather than in the Obj list parse() hands back.
+typedef struct {
+  char *name;
+  Type *type_def; // non-NULL for a typedef
+  Type *enum_ty;  // non-NULL for an enum constant
+  int64_t enum_val;
+  char *filename; // where the name was declared, for filtering
+} ScopeEntry;
+
+int file_scope_typedef_count(void);
+int file_scope_typedefs(ScopeEntry *out, int cap);
+int file_scope_tag_count(void);
+int file_scope_tags(ScopeEntry *out, int cap);
+
 //
 // type.c
 //
@@ -365,6 +382,10 @@ struct Type {
   // Declaration
   Token *name;
   Token *name_pos;
+
+  // [bindgen] struct/union/enum tag, set by struct_union_decl and
+  // enum_specifier. Distinct from `name`, which is a declarator name.
+  Token *tag_tok;
 
   // Array
   int array_len;

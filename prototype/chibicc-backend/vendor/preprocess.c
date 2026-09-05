@@ -772,6 +772,12 @@ char *search_include_paths(char *filename) {
     include_next_idx = i + 1;
     return path;
   }
+
+  // [bindgen] Headers we carry inside the binary are found last, so a
+  // real one on the include path still wins.
+  if (builtin_header(filename))
+    return filename;
+
   return NULL;
 }
 
@@ -878,6 +884,18 @@ static Token *include_file(Token *tok, char *path, Token *filename_tok) {
     return tok;
 
   Token *tok2 = tokenize_file(path);
+
+  // [bindgen] Fall back to a header we carry inside the binary, so
+  // stddef.h/stdarg.h/stdbool.h resolve with nothing on disk.
+  if (!tok2) {
+    char *text = builtin_header(path);
+    if (text) {
+      static int builtin_file_no = 1000;
+      File *f = new_file(path, builtin_file_no++, text);
+      tok2 = tokenize(f);
+    }
+  }
+
   if (!tok2)
     error_tok(filename_tok, "%s: cannot open file: %s", path, strerror(errno));
 

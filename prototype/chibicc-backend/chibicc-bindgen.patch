@@ -1,8 +1,15 @@
 diff --git a/chibicc.h b/chibicc.h
-index f73eeec..d4642cd 100644
+index f73eeec..f450d80 100644
 --- a/chibicc.h
 +++ b/chibicc.h
-@@ -118,6 +118,33 @@ void define_macro(char *name, char *buf);
+@@ -112,12 +112,40 @@ Token *tokenize_file(char *filename);
+ // preprocess.c
+ //
+ 
++char *builtin_header(char *name); // [bindgen] builtin_headers.c
+ char *search_include_paths(char *filename);
+ void init_macros(void);
+ void define_macro(char *name, char *buf);
  void undef_macro(char *name);
  Token *preprocess(Token *tok);
  
@@ -36,7 +43,41 @@ index f73eeec..d4642cd 100644
  //
  // parse.c
  //
-@@ -443,6 +470,7 @@ void hashmap_put(HashMap *map, char *key, void *val);
+@@ -294,6 +322,22 @@ Node *new_cast(Node *expr, Type *ty);
+ int64_t const_expr(Token **rest, Token *tok);
+ Obj *parse(Token *tok);
+ 
++// [bindgen] File-scope introspection, valid after parse() returns.
++// A binding generator needs typedefs and struct/union/enum tags, which
++// live in scope rather than in the Obj list parse() hands back.
++typedef struct {
++  char *name;
++  Type *type_def; // non-NULL for a typedef
++  Type *enum_ty;  // non-NULL for an enum constant
++  int64_t enum_val;
++  char *filename; // where the name was declared, for filtering
++} ScopeEntry;
++
++int file_scope_typedef_count(void);
++int file_scope_typedefs(ScopeEntry *out, int cap);
++int file_scope_tag_count(void);
++int file_scope_tags(ScopeEntry *out, int cap);
++
+ //
+ // type.c
+ //
+@@ -339,6 +383,10 @@ struct Type {
+   Token *name;
+   Token *name_pos;
+ 
++  // [bindgen] struct/union/enum tag, set by struct_union_decl and
++  // enum_specifier. Distinct from `name`, which is a declarator name.
++  Token *tag_tok;
++
+   // Array
+   int array_len;
+ 
+@@ -443,6 +491,7 @@ void hashmap_put(HashMap *map, char *key, void *val);
  void hashmap_put2(HashMap *map, char *key, int keylen, void *val);
  void hashmap_delete(HashMap *map, char *key);
  void hashmap_delete2(HashMap *map, char *key, int keylen);
@@ -59,11 +100,85 @@ index a83934d..846c68a 100644
 +bool hashmap_entry_live(HashEntry *ent) {
 +  return ent->key && ent->key != TOMBSTONE;
 +}
+diff --git a/include/stdarg.h b/include/stdarg.h
+index 29df41d..475e6d2 100644
+--- a/include/stdarg.h
++++ b/include/stdarg.h
+@@ -1,6 +1,12 @@
+ #ifndef __STDARG_H
+ #define __STDARG_H
+ 
++// [bindgen] Declaration-only stdarg. The binding generator never
++// generates code, so the va_* macros need to type-check inside an
++// inline function in a header but not do anything. Upstream chibicc's
++// version expands va_start to __va_area__, which only exists inside a
++// variadic function body being compiled.
++
+ typedef struct {
+   unsigned int gp_offset;
+   unsigned int fp_offset;
+@@ -10,45 +16,9 @@ typedef struct {
+ 
+ typedef __va_elem va_list[1];
+ 
+-#define va_start(ap, last) \
+-  do { *(ap) = *(__va_elem *)__va_area__; } while (0)
+-
+-#define va_end(ap)
+-
+-static void *__va_arg_mem(__va_elem *ap, int sz, int align) {
+-  void *p = ap->overflow_arg_area;
+-  if (align > 8)
+-    p = (p + 15) / 16 * 16;
+-  ap->overflow_arg_area = ((unsigned long)p + sz + 7) / 8 * 8;
+-  return p;
+-}
+-
+-static void *__va_arg_gp(__va_elem *ap, int sz, int align) {
+-  if (ap->gp_offset >= 48)
+-    return __va_arg_mem(ap, sz, align);
+-
+-  void *r = ap->reg_save_area + ap->gp_offset;
+-  ap->gp_offset += 8;
+-  return r;
+-}
+-
+-static void *__va_arg_fp(__va_elem *ap, int sz, int align) {
+-  if (ap->fp_offset >= 112)
+-    return __va_arg_mem(ap, sz, align);
+-
+-  void *r = ap->reg_save_area + ap->fp_offset;
+-  ap->fp_offset += 8;
+-  return r;
+-}
+-
+-#define va_arg(ap, ty)                                                  \
+-  ({                                                                    \
+-    int klass = __builtin_reg_class(ty);                                \
+-    *(ty *)(klass == 0 ? __va_arg_gp(ap, sizeof(ty), _Alignof(ty)) :    \
+-            klass == 1 ? __va_arg_fp(ap, sizeof(ty), _Alignof(ty)) :    \
+-            __va_arg_mem(ap, sizeof(ty), _Alignof(ty)));                \
+-  })
+-
++#define va_start(ap, last) ((void)0)
++#define va_end(ap)         ((void)0)
++#define va_arg(ap, ty)     (*(ty *)0)
+ #define va_copy(dest, src) ((dest)[0] = (src)[0])
+ 
+ #define __GNUC_VA_LIST 1
 diff --git a/parse.c b/parse.c
-index 6acaeb8..aa67186 100644
+index 6acaeb8..4009ed1 100644
 --- a/parse.c
 +++ b/parse.c
-@@ -154,6 +154,7 @@ static Node *primary(Token **rest, Token *tok);
+@@ -25,6 +25,7 @@ typedef struct {
+   Type *type_def;
+   Type *enum_ty;
+   int enum_val;
++  Token *decl_tok; // [bindgen] where this name was introduced
+ } VarScope;
+ 
+ // Represents a block scope.
+@@ -154,6 +155,7 @@ static Node *primary(Token **rest, Token *tok);
  static Token *parse_typedef(Token *tok, Type *basety);
  static bool is_function(Token *tok);
  static Token *function(Token *tok, Type *basety, VarAttr *attr);
@@ -71,7 +186,19 @@ index 6acaeb8..aa67186 100644
  static Token *global_variable(Token *tok, Type *basety, VarAttr *attr);
  
  static int align_down(int n, int align) {
-@@ -350,6 +351,17 @@ static Type *find_typedef(Token *tok) {
+@@ -252,8 +254,11 @@ Node *new_cast(Node *expr, Type *ty) {
+   return node;
+ }
+ 
++static Token *cur_decl_tok; // [bindgen] set by callers of push_scope
++
+ static VarScope *push_scope(char *name) {
+   VarScope *sc = calloc(1, sizeof(VarScope));
++  sc->decl_tok = cur_decl_tok; // [bindgen]
+   hashmap_put(&scope->vars, name, sc);
+   return sc;
+ }
+@@ -350,6 +355,17 @@ static Type *find_typedef(Token *tok) {
      VarScope *sc = find_var(tok);
      if (sc)
        return sc->type_def;
@@ -89,7 +216,7 @@ index 6acaeb8..aa67186 100644
    }
    return NULL;
  }
-@@ -481,6 +493,22 @@ static Type *declspec(Token **rest, Token *tok, VarAttr *attr) {
+@@ -481,6 +497,22 @@ static Type *declspec(Token **rest, Token *tok, VarAttr *attr) {
        continue;
      }
  
@@ -112,7 +239,32 @@ index 6acaeb8..aa67186 100644
      // Handle built-in types.
      if (equal(tok, "void"))
        counter += VOID;
-@@ -1504,6 +1532,7 @@ static bool is_typename(Token *tok) {
+@@ -769,6 +801,8 @@ static Type *enum_specifier(Token **rest, Token *tok) {
+   }
+ 
+   tok = skip(tok, "{");
++  if (tag)
++    ty->tag_tok = tag; // [bindgen]
+ 
+   // Read an enum-list.
+   int i = 0;
+@@ -778,12 +812,15 @@ static Type *enum_specifier(Token **rest, Token *tok) {
+       tok = skip(tok, ",");
+ 
+     char *name = get_ident(tok);
++    Token *name_tok_bg = tok; // [bindgen]
+     tok = tok->next;
+ 
+     if (equal(tok, "="))
+       val = const_expr(&tok, tok->next);
+ 
++    cur_decl_tok = name_tok_bg; // [bindgen]
+     VarScope *sc = push_scope(name);
++    cur_decl_tok = NULL;
+     sc->enum_ty = ty;
+     sc->enum_val = val++;
+   }
+@@ -1504,6 +1541,7 @@ static bool is_typename(Token *tok) {
        "const", "volatile", "auto", "register", "restrict", "__restrict",
        "__restrict__", "_Noreturn", "float", "double", "typeof", "inline",
        "_Thread_local", "__thread", "_Atomic",
@@ -120,7 +272,7 @@ index 6acaeb8..aa67186 100644
      };
  
      for (int i = 0; i < sizeof(kw) / sizeof(*kw); i++)
-@@ -1525,7 +1554,21 @@ static Node *asm_stmt(Token **rest, Token *tok) {
+@@ -1525,7 +1563,21 @@ static Node *asm_stmt(Token **rest, Token *tok) {
    if (tok->kind != TK_STR || tok->ty->base->kind != TY_CHAR)
      error_tok(tok, "expected string literal");
    node->asm_str = tok->str;
@@ -143,7 +295,7 @@ index 6acaeb8..aa67186 100644
    return node;
  }
  
-@@ -1705,7 +1748,7 @@ static Node *stmt(Token **rest, Token *tok) {
+@@ -1705,7 +1757,7 @@ static Node *stmt(Token **rest, Token *tok) {
      return node;
    }
  
@@ -152,7 +304,7 @@ index 6acaeb8..aa67186 100644
      return asm_stmt(rest, tok);
  
    if (equal(tok, "goto")) {
-@@ -2620,7 +2663,18 @@ static Token *attribute_list(Token *tok, Type *ty) {
+@@ -2620,7 +2672,18 @@ static Token *attribute_list(Token *tok, Type *ty) {
          continue;
        }
  
@@ -172,7 +324,14 @@ index 6acaeb8..aa67186 100644
      }
  
      tok = skip(tok, ")");
-@@ -2655,8 +2709,25 @@ static Type *struct_union_decl(Token **rest, Token *tok) {
+@@ -2649,14 +2712,35 @@ static Type *struct_union_decl(Token **rest, Token *tok) {
+       return ty2;
+ 
+     ty->size = -1;
++    ty->tag_tok = tag; // [bindgen]
+     push_tag_scope(tag, ty);
+     return ty;
+   }
  
    tok = skip(tok, "{");
  
@@ -180,6 +339,9 @@ index 6acaeb8..aa67186 100644
 +  // member can refer to the struct being defined by its bare tag
 +  // (a C++ism; see find_typedef). Only a pointer to it can appear,
 +  // so an incomplete type is enough.
++  if (tag)
++    ty->tag_tok = tag; // [bindgen]
++
 +  bool pushed_early = false;
 +  if (tag && !find_tag(tag)) {
 +    ty->size = -1;
@@ -198,7 +360,17 @@ index 6acaeb8..aa67186 100644
    *rest = attribute_list(tok, ty);
  
    if (tag) {
-@@ -3196,8 +3267,29 @@ static void mark_live(Obj *var) {
+@@ -3138,7 +3222,9 @@ static Token *parse_typedef(Token *tok, Type *basety) {
+     Type *ty = declarator(&tok, tok, basety);
+     if (!ty->name)
+       error_tok(ty->name_pos, "typedef name omitted");
++    cur_decl_tok = ty->name; // [bindgen]
+     push_scope(get_ident(ty->name))->type_def = ty;
++    cur_decl_tok = NULL;
+   }
+   return tok;
+ }
+@@ -3196,8 +3282,29 @@ static void mark_live(Obj *var) {
    }
  }
  
@@ -228,7 +400,7 @@ index 6acaeb8..aa67186 100644
    if (!ty->name)
      error_tok(ty->name_pos, "function name omitted");
    char *name_str = get_ident(ty->name);
-@@ -3270,6 +3362,7 @@ static Token *global_variable(Token *tok, Type *basety, VarAttr *attr) {
+@@ -3270,6 +3377,7 @@ static Token *global_variable(Token *tok, Type *basety, VarAttr *attr) {
      first = false;
  
      Type *ty = declarator(&tok, tok, basety);
@@ -236,8 +408,67 @@ index 6acaeb8..aa67186 100644
      if (!ty->name)
        error_tok(ty->name_pos, "variable name omitted");
  
+@@ -3334,6 +3442,58 @@ static void declare_builtin_functions(void) {
+ }
+ 
+ // program = (typedef | function-definition | global-variable)*
++// [bindgen] File-scope introspection. See chibicc.h.
++// `scope` is back at file scope once parse() has returned.
++
++int file_scope_typedef_count(void) {
++  int n = 0;
++  for (int i = 0; i < scope->vars.capacity; i++)
++    if (hashmap_entry_live(&scope->vars.buckets[i]))
++      n++;
++  return n;
++}
++
++int file_scope_typedefs(ScopeEntry *out, int cap) {
++  int n = 0;
++  for (int i = 0; i < scope->vars.capacity && n < cap; i++) {
++    HashEntry *e = &scope->vars.buckets[i];
++    if (!hashmap_entry_live(e))
++      continue;
++    VarScope *sc = e->val;
++    out[n].name = strndup(e->key, e->keylen);
++    out[n].type_def = sc->type_def;
++    out[n].enum_ty = sc->enum_ty;
++    out[n].enum_val = sc->enum_val;
++    out[n].filename = sc->decl_tok ? sc->decl_tok->filename : NULL;
++    n++;
++  }
++  return n;
++}
++
++int file_scope_tag_count(void) {
++  int n = 0;
++  for (int i = 0; i < scope->tags.capacity; i++)
++    if (hashmap_entry_live(&scope->tags.buckets[i]))
++      n++;
++  return n;
++}
++
++int file_scope_tags(ScopeEntry *out, int cap) {
++  int n = 0;
++  for (int i = 0; i < scope->tags.capacity && n < cap; i++) {
++    HashEntry *e = &scope->tags.buckets[i];
++    if (!hashmap_entry_live(e))
++      continue;
++    out[n].name = strndup(e->key, e->keylen);
++    out[n].type_def = e->val;
++    out[n].enum_ty = NULL;
++    out[n].enum_val = 0;
++    out[n].filename = NULL;
++    n++;
++  }
++  return n;
++}
++
+ Obj *parse(Token *tok) {
+   declare_builtin_functions();
+   globals = NULL;
 diff --git a/preprocess.c b/preprocess.c
-index 2bef487..9ab057b 100644
+index 2bef487..52a3aa8 100644
 --- a/preprocess.c
 +++ b/preprocess.c
 @@ -48,6 +48,7 @@ struct Macro {
@@ -351,7 +582,39 @@ index 2bef487..9ab057b 100644
    }
  }
  
-@@ -979,6 +1051,15 @@ static Token *preprocess2(Token *tok) {
+@@ -700,6 +772,12 @@ char *search_include_paths(char *filename) {
+     include_next_idx = i + 1;
+     return path;
+   }
++
++  // [bindgen] Headers we carry inside the binary are found last, so a
++  // real one on the include path still wins.
++  if (builtin_header(filename))
++    return filename;
++
+   return NULL;
+ }
+ 
+@@ -806,6 +884,18 @@ static Token *include_file(Token *tok, char *path, Token *filename_tok) {
+     return tok;
+ 
+   Token *tok2 = tokenize_file(path);
++
++  // [bindgen] Fall back to a header we carry inside the binary, so
++  // stddef.h/stdarg.h/stdbool.h resolve with nothing on disk.
++  if (!tok2) {
++    char *text = builtin_header(path);
++    if (text) {
++      static int builtin_file_no = 1000;
++      File *f = new_file(path, builtin_file_no++, text);
++      tok2 = tokenize(f);
++    }
++  }
++
+   if (!tok2)
+     error_tok(filename_tok, "%s: cannot open file: %s", path, strerror(errno));
+ 
+@@ -979,6 +1069,15 @@ static Token *preprocess2(Token *tok) {
      if (equal(tok, "error"))
        error_tok(tok, "error");
  
@@ -367,7 +630,7 @@ index 2bef487..9ab057b 100644
      // `#`-only line is legal. It's called a null directive.
      if (tok->at_bol)
        continue;
-@@ -999,6 +1080,59 @@ void undef_macro(char *name) {
+@@ -999,6 +1098,59 @@ void undef_macro(char *name) {
    hashmap_delete(&macros, name);
  }
  
@@ -427,7 +690,7 @@ index 2bef487..9ab057b 100644
  static Macro *add_builtin(char *name, macro_handler_fn *fn) {
    Macro *m = add_macro(name, true, NULL);
    m->handler = fn;
-@@ -1080,6 +1214,16 @@ void init_macros(void) {
+@@ -1080,6 +1232,16 @@ void init_macros(void) {
    define_macro("__STDC_UTF_32__", "1");
    define_macro("__STDC_VERSION__", "201112L");
    define_macro("__STDC__", "1");
@@ -444,7 +707,7 @@ index 2bef487..9ab057b 100644
    define_macro("__USER_LABEL_PREFIX__", "");
    define_macro("__alignof__", "_Alignof");
    define_macro("__amd64", "1");
-@@ -1088,6 +1232,7 @@ void init_macros(void) {
+@@ -1088,6 +1250,7 @@ void init_macros(void) {
    define_macro("__const__", "const");
    define_macro("__gnu_linux__", "1");
    define_macro("__inline__", "inline");
