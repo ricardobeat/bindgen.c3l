@@ -19,10 +19,8 @@ const INDENT = "  ";
  Aliasing typedef
  @param [&inout] out
  @param [&out]   state  : "Sets state.kind to WriteKind.ALIAS"
- @require name            != ""
- @require underlying_name != ""
 *>
-fn usz? typedefAlias(
+fn sz? typedefAlias(
   OutStream out,
   WriteState* state,
   String name,
@@ -32,7 +30,7 @@ fn usz? typedefAlias(
 {
   state.kind = ALIAS;
 
-  usz? acc;
+  sz? acc;
   acc += io::fprintfn(out, "\nalias %s%s = %s;", name, attribs, underlying_name);
   return acc;
 }
@@ -42,10 +40,8 @@ fn usz? typedefAlias(
  Distinct typedef
  @param [&inout] out
  @param [&out]   state  : "Sets state.kind to WriteKind.TYPEDEF"
- @require name            != ""
- @require underlying_name != ""
 *>
-fn usz? typedefDistinct(
+fn sz? typedefDistinct(
   OutStream out,
   WriteState* state,
   String name,
@@ -55,7 +51,7 @@ fn usz? typedefDistinct(
 {
   state.kind = TYPEDEF;
 
-  usz? acc;
+  sz? acc;
   acc += io::fprintfn(out, "\ntypedef %s%s = %s;", name, attribs, underlying_name);
   return acc;
 }
@@ -65,11 +61,8 @@ fn usz? typedefDistinct(
  Function pointer typedef
  @param [&inout] out
  @param [&out]   state                                                            : "Sets state.kind to WriteKind.ALIAS"
- @require !array::has(params, fn bool(VarDecl e) => e.type == "" && e.name != "") : "Each parameter must have type if it has name"
- @require name        != ""
- @require return_type != ""
 *>
-fn usz? typedefFunc(
+fn sz? typedefFunc(
   OutStream out,
   WriteState* state,
   String name,
@@ -80,7 +73,7 @@ fn usz? typedefFunc(
 {
   state.kind = ALIAS;
 
-  usz? acc;
+  sz? acc;
   
   acc += io::fprintf(out, "\nalias %s%s = fn %s(", name, attribs, return_type);
   
@@ -107,10 +100,8 @@ fn usz? typedefFunc(
  @param [&inout] out
  @param [&inout] state : "Sets state.kind to CONST"
  @param          type  : "Can be empty, for example, for macro"
- @require name  != ""
- @require value != ""
 *>
-fn usz? constDecl(
+fn sz? constDecl(
   OutStream out,
   WriteState* state,
   String type,
@@ -122,7 +113,7 @@ fn usz? constDecl(
   WriteKind prev_kind = state.kind;
   state.kind = CONST;
 
-  usz? acc;
+  sz? acc;
 
   if (prev_kind != CONST && prev_kind != ENUM) acc += io::fprintf(out, "\n");
 
@@ -141,10 +132,8 @@ fn usz? constDecl(
  @param [&inout] out
  @param [&inout] state : "Sets state.kind to CONST"
  @param          value : "Can be empty"
- @require type != ""
- @require name != ""
 *>
-fn usz? varDecl(
+fn sz? varDecl(
   OutStream out,
   WriteState* state,
   String type,
@@ -155,7 +144,7 @@ fn usz? varDecl(
 {
   state.kind = VAR;
 
-  usz? acc;
+  sz? acc;
 
   if (value == "") {
     acc += io::fprintfn(out, "\n%s %s%s;", type, name, attribs);
@@ -171,10 +160,8 @@ fn usz? varDecl(
  Enum declaration without it's underlying constants
  @param [&inout] out
  @param [&inout] state : "Sets state.kind to ENUM"
- @require name != ""
- @require type != ""
 *>
-fn usz? enumDecl(
+fn sz? enumDecl(
   OutStream out,
   WriteState* state,
   String name,
@@ -192,12 +179,8 @@ fn usz? enumDecl(
  Function declaration
  @param [&inout] out
  @param [&inout] state                                                            : "Sets state.kind to FUNC"
- @require !array::has(params, fn bool(VarDecl e) => e.type == "" && e.name != "") : "Each parameter must have type if it has name"
- @require return_type   != ""
- @require original_name != ""
- @require name          != ""
 *>
-fn usz? func(
+fn sz? func(
   OutStream out,
   WriteState* state,
   VarDecl[] params,
@@ -209,7 +192,7 @@ fn usz? func(
 {
   state.kind = FUNC;
 
-  usz? acc;
+  sz? acc;
 
   acc += io::fprintf(out, "\nfn %s %s(", return_type, name);
   if (params.len > 0) acc += io::fprintf(out, "\n");
@@ -221,7 +204,7 @@ fn usz? func(
     }
     if (i < params.len - 1) acc += io::fprintn(out, ",");
   }
-  acc += io::fprintfn(out, ")\n@extern(\"%s\")%s;", original_name, attribs);
+  acc += io::fprintfn(out, ")\n@cname(\"%s\")%s;", original_name, attribs);
 
   return acc;
 }
@@ -232,10 +215,8 @@ fn usz? func(
  @param [&inout] out
  @param [&inout] state                                          : "Sets state.kind to MACRO"
  @param          body                                           : "Can be empty"
- @require !array::has(params, fn bool(String val) => val == "") : "params can't contain empty entries"
- @require name != ""
 *>
-fn usz? funcMacro(
+fn sz? funcMacro(
   OutStream out,
   WriteState* state,
   String[] params,
@@ -246,7 +227,7 @@ fn usz? funcMacro(
 {
   state.kind = MACRO;
 
-  usz? acc;
+  sz? acc;
 
   acc += io::fprintf(out, "\nmacro @%s(", name);
   foreach (i, p : params) {
@@ -269,9 +250,8 @@ fn usz? funcMacro(
  Module section statement
  @param [&inout] out
  @param [&out]   state : "Sets state.kind to WriteKind.MODULE"
- @require module_name != ""
 *>
-fn usz? moduleHead(
+fn sz? moduleHead(
   OutStream out,
   WriteState* state,
   String module_name,
@@ -288,9 +268,8 @@ fn usz? moduleHead(
  Import statemenet 
  @param [&inout] out
  @param [&out]   state : "Sets state.kind to WriteKind.IMPORT"
- @require import_module != ""
 *>
-fn usz? importModule(
+fn sz? importModule(
   OutStream out,
   WriteState* state,
   String import_module)
@@ -308,7 +287,7 @@ fn usz? importModule(
  @param [&in]    fields
  @param [&out]   state  : "Sets state.kind to WriteKind.IMPORT"
 *>
-fn usz? structDecl(
+fn sz? structDecl(
   OutStream out,
   WriteState* state,
   String name,
@@ -319,7 +298,7 @@ fn usz? structDecl(
 {
   state.kind = STRUCT;
 
-  usz? acc;
+  sz? acc;
 
   acc += printIndent(out, indent_level);
   
@@ -343,7 +322,7 @@ fn usz? structDecl(
 <*
  Union declaration
 *>
-fn usz? unionDecl(
+fn sz? unionDecl(
   OutStream out,
   WriteState* state,
   String name,
@@ -354,7 +333,7 @@ fn usz? unionDecl(
 {
   state.kind = UNION;
 
-  usz? acc;
+  sz? acc;
 
   acc += printIndent(out, indent_level);
 
@@ -379,13 +358,13 @@ fn usz? unionDecl(
  Helper function for wter::structDecl and wter::unionDecl,
  which writes record fields
 *>
-fn usz? fields(
+fn sz? fields(
   OutStream out,
   WriteState* state,
   C3Fields* fields,
   usz indent_level)
 {
-  usz? acc;
+  sz? acc;
 
   fields.@foreach(; C3FieldKind* kind, usz index)
   {
@@ -393,15 +372,15 @@ fn usz? fields(
     {
       case NORMAL:
         acc += printIndent(out, indent_level);
-        acc += io::fprintfn(out, "%s %s;", fields.norm[index].type, fields.norm[index].name);
+        acc += io::fprintfn(out, "%s %s;", fields.norm[(sz)index].type, fields.norm[(sz)index].name);
 
       case BITSTRUCT:
         state.kind = BITSTRUCT;
 
         acc += printIndent(out, indent_level);
-        acc += io::fprintfn(out, "bitstruct : %s {", fields.bit[index].under_type)!;
+        acc += io::fprintfn(out, "bitstruct : %s {", fields.bit[(sz)index].under_type)!;
 
-        foreach (C3BitstructField bitf : fields.bit[index].fields)
+        foreach (C3BitstructField bitf : fields.bit[(sz)index].fields)
         {
           acc += printIndent(out, indent_level + 1);
           acc += io::fprintfn(out, "%s %s : %s..%s;", bitf.type, bitf.name, bitf.from, bitf.to)!;
@@ -411,10 +390,10 @@ fn usz? fields(
         acc += io::fprintfn(out, "}")!;
 
       case STRUCT:
-        acc += wter::structDecl(out, state, fields.structs[index].name, &fields.structs[index].fields, indent_level);
+        acc += wter::structDecl(out, state, fields.structs[(sz)index].name, &fields.structs[(sz)index].fields, indent_level);
 
       case UNION:
-        acc += wter::unionDecl(out, state, fields.unions[index].name, &fields.unions[index].fields, indent_level);
+        acc += wter::unionDecl(out, state, fields.unions[(sz)index].name, &fields.unions[(sz)index].fields, indent_level);
         
       default: unreachable();
     }
@@ -427,11 +406,11 @@ fn usz? fields(
 <*
  Helper printer
 *>
-fn usz? printIndent( 
+fn sz? printIndent( 
   OutStream out, 
   usz indent_level = 1)
 {
-  usz? acc;
+  sz? acc;
   for (usz i; i < indent_level; ++i) acc += io::fprintf(out, INDENT);
   return acc;
 }
