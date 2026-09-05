@@ -3,11 +3,12 @@ import std::io, std::os;
 
 fn void main(String[] args) {
   if (args.len < 3) {
-    io::eprintn("usage: stress <header> <module> [out]");
+    io::eprintn("usage: stress <header> <module> [out] [clang args...]");
     os::exit(2);
   }
 
   BGOptions opts = {
+    .clang_args = args.len > 4 ? args[4..] : {},
     .out_name = args.len > 3 ? args[3] : "",
     .module_name = args[2],
     .no_verbose = true,

@@ -12,13 +12,13 @@ mkdir -p "$work/headers" "$work/out"
 c3c build stress || exit 1
 
 fail=0
-while read -r url; do
+while read -r url cargs; do
   case "$url" in ''|\#*) continue ;; esac
   name=$(basename "$url" .h)
   header="$work/headers/$name.h"
   [ -f "$header" ] || curl -sSLf "$url" -o "$header" || { echo "$name: FETCH FAILED"; fail=1; continue; }
 
-  if ! ./build/stress "$header" "$name" "$work/out/$name.c3" >/dev/null 2>"$work/out/$name.err"; then
+  if ! ./build/stress "$header" "$name" "$work/out/$name.c3" $cargs >/dev/null 2>"$work/out/$name.err"; then
     echo "$name: GENERATE FAILED"
     sed -n '1,3p' "$work/out/$name.err"
     fail=1
