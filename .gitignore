@@ -7,3 +7,4 @@ examples/*.c3i
 
 prototype/chibicc-backend/chibicc
 prototype/chibicc-backend/*.o
+tools/bgdump

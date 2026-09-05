@@ -35,6 +35,11 @@
       "sources" : [ "examples/mlir.c3" ],
     },
 
+    "roundtrip" : {
+      "type" : "executable",
+      "sources" : [ "examples/roundtrip.c3" ],
+    },
+
     "stress" : {
       "type" : "executable",
       "sources" : [ "examples/stress.c3" ],
