@@ -1,0 +1,15 @@
+# Header-only C libraries used to stress the generator.
+# Fetched by tests/stress/run.sh; not vendored.
+https://raw.githubusercontent.com/nothings/stb/master/stb_image.h
+https://raw.githubusercontent.com/nothings/stb/master/stb_image_write.h
+https://raw.githubusercontent.com/nothings/stb/master/stb_truetype.h
+https://raw.githubusercontent.com/nothings/stb/master/stb_ds.h
+https://raw.githubusercontent.com/nothings/stb/master/stb_sprintf.h
+https://raw.githubusercontent.com/nothings/stb/master/stb_rect_pack.h
+https://raw.githubusercontent.com/nothings/stb/master/stb_perlin.h
+https://raw.githubusercontent.com/DaveGamble/cJSON/master/cJSON.h
+https://raw.githubusercontent.com/sheredom/json.h/master/json.h
+https://raw.githubusercontent.com/zserge/jsmn/master/jsmn.h
+https://raw.githubusercontent.com/RandyGaul/cute_headers/master/cute_sound.h
+https://raw.githubusercontent.com/RandyGaul/cute_headers/master/cute_tiled.h
+https://raw.githubusercontent.com/erkkah/tigr/master/tigr.h
