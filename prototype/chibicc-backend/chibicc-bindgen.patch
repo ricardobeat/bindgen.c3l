@@ -1,0 +1,121 @@
+diff --git a/parse.c b/parse.c
+index 6acaeb8..a7f8f20 100644
+--- a/parse.c
++++ b/parse.c
+@@ -154,6 +154,7 @@ static Node *primary(Token **rest, Token *tok);
+ static Token *parse_typedef(Token *tok, Type *basety);
+ static bool is_function(Token *tok);
+ static Token *function(Token *tok, Type *basety, VarAttr *attr);
++static Token *skip_trailing_attrs(Token *tok);
+ static Token *global_variable(Token *tok, Type *basety, VarAttr *attr);
+ 
+ static int align_down(int n, int align) {
+@@ -481,6 +482,22 @@ static Type *declspec(Token **rest, Token *tok, VarAttr *attr) {
+       continue;
+     }
+ 
++    // [bindgen] Leading __attribute__ on a declaration, e.g.
++    // __attribute__((deprecated)) void f(void);
++    if (equal(tok, "__attribute__")) {
++      tok = skip_trailing_attrs(tok);
++      continue;
++    }
++
++    // [bindgen] __builtin_va_list: model as void* so headers that
++    // typedef it (every libc via stdarg) parse. Layout is not used.
++    if (equal(tok, "__builtin_va_list")) {
++      ty = pointer_to(ty_void);
++      tok = tok->next;
++      counter += OTHER;
++      continue;
++    }
++
+     // Handle built-in types.
+     if (equal(tok, "void"))
+       counter += VOID;
+@@ -1504,6 +1521,7 @@ static bool is_typename(Token *tok) {
+       "const", "volatile", "auto", "register", "restrict", "__restrict",
+       "__restrict__", "_Noreturn", "float", "double", "typeof", "inline",
+       "_Thread_local", "__thread", "_Atomic",
++      "__builtin_va_list", "__attribute__", // [bindgen]
+     };
+ 
+     for (int i = 0; i < sizeof(kw) / sizeof(*kw); i++)
+@@ -2620,7 +2638,18 @@ static Token *attribute_list(Token *tok, Type *ty) {
+         continue;
+       }
+ 
+-      error_tok(tok, "unknown attribute");
++      // [bindgen] Skip any other attribute, balancing nested parens.
++      // Real headers use dozens (availability, deprecated, format, ...)
++      // and none of them affect the binding we emit.
++      tok = tok->next;
++      if (equal(tok, "(")) {
++        int depth = 0;
++        do {
++          if (equal(tok, "(")) depth++;
++          else if (equal(tok, ")")) depth--;
++          tok = tok->next;
++        } while (depth > 0);
++      }
+     }
+ 
+     tok = skip(tok, ")");
+@@ -3196,8 +3225,29 @@ static void mark_live(Obj *var) {
+   }
+ }
+ 
++// [bindgen] Skip a run of trailing __attribute__/__asm__ after a
++// declarator. Real headers put availability, deprecated, format,
++// nonnull and asm-renames here; none change the emitted binding.
++static Token *skip_trailing_attrs(Token *tok) {
++  for (;;) {
++    if (!equal(tok, "__attribute__") && !equal(tok, "__asm") &&
++        !equal(tok, "__asm__"))
++      return tok;
++    tok = tok->next;
++    if (!equal(tok, "("))
++      continue;
++    int depth = 0;
++    do {
++      if (equal(tok, "(")) depth++;
++      else if (equal(tok, ")")) depth--;
++      tok = tok->next;
++    } while (depth > 0);
++  }
++}
++
+ static Token *function(Token *tok, Type *basety, VarAttr *attr) {
+   Type *ty = declarator(&tok, tok, basety);
++  tok = skip_trailing_attrs(tok);
+   if (!ty->name)
+     error_tok(ty->name_pos, "function name omitted");
+   char *name_str = get_ident(ty->name);
+@@ -3270,6 +3320,7 @@ static Token *global_variable(Token *tok, Type *basety, VarAttr *attr) {
+     first = false;
+ 
+     Type *ty = declarator(&tok, tok, basety);
++    tok = skip_trailing_attrs(tok);
+     if (!ty->name)
+       error_tok(ty->name_pos, "variable name omitted");
+ 
+diff --git a/preprocess.c b/preprocess.c
+index 2bef487..f0a27ec 100644
+--- a/preprocess.c
++++ b/preprocess.c
+@@ -979,6 +979,15 @@ static Token *preprocess2(Token *tok) {
+     if (equal(tok, "error"))
+       error_tok(tok, "error");
+ 
++    // [bindgen] #warning: headers use it to complain about the compiler
++    // (Apple's sys/cdefs.h rejects anything that is not clang/gcc).
++    // Consume the rest of the line and carry on.
++    if (equal(tok, "warning")) {
++      while (tok && !tok->at_bol)
++        tok = tok->next;
++      continue;
++    }
++
+     // `#`-only line is legal. It's called a null directive.
+     if (tok->at_bol)
+       continue;
