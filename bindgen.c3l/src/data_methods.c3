@@ -103,7 +103,7 @@ macro void CTypeTokens.free(&self)
  Iterates through CTypeTokens in reversed order,
  returning the kind and index of a name string.
  If token is represented with const string,
- sets index to 0xFFFFFFFFFFFFFFFF.
+ sets index to usz::max.
 *>
 macro CTypeTokens.@foreach(
   &self; 
@@ -112,7 +112,7 @@ macro CTypeTokens.@foreach(
   usz str_counter;
   usz str_len = (usz)self.strs.size;
   foreach_r (k : self.kinds) {
-    usz str_index = 0xFFFFFFFFFFFFFFFF;
+    usz str_index = usz::max;
     switch (k) {
       case NAME:
       case SIZED_ARRAY:
