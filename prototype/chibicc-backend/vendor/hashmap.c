@@ -163,3 +163,10 @@ void hashmap_test(void) {
   assert(hashmap_get(map, "no such key") == NULL);
   printf("OK\n");
 }
+
+// [bindgen] True if this bucket holds a live entry. Deletion leaves a
+// TOMBSTONE rather than clearing the key, so callers that walk buckets
+// directly must not treat one as present.
+bool hashmap_entry_live(HashEntry *ent) {
+  return ent->key && ent->key != TOMBSTONE;
+}

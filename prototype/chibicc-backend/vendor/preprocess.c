@@ -48,6 +48,7 @@ struct Macro {
   char *va_args_name;
   Token *body;
   macro_handler_fn *handler;
+  Token *def_tok; // [bindgen] the name token, for source location
 };
 
 // `#if` can be nested, so we use a stack to manage nested `#if`s.
@@ -369,6 +370,7 @@ static void read_macro_definition(Token **rest, Token *tok) {
   if (tok->kind != TK_IDENT)
     error_tok(tok, "macro name must be an identifier");
   char *name = strndup(tok->loc, tok->len);
+  Token *name_tok = tok; // [bindgen] for source location
   tok = tok->next;
 
   if (!tok->has_space && equal(tok, "(")) {
@@ -379,9 +381,11 @@ static void read_macro_definition(Token **rest, Token *tok) {
     Macro *m = add_macro(name, false, copy_line(rest, tok));
     m->params = params;
     m->va_args_name = va_args_name;
+    m->def_tok = name_tok;
   } else {
     // Object-like macro
-    add_macro(name, true, copy_line(rest, tok));
+    Macro *m = add_macro(name, true, copy_line(rest, tok));
+    m->def_tok = name_tok;
   }
 }
 
@@ -1006,6 +1010,59 @@ void define_macro(char *name, char *buf) {
 
 void undef_macro(char *name) {
   hashmap_delete(&macros, name);
+}
+
+// [bindgen] Macro introspection. See chibicc.h.
+
+static void fill_macro_def(Macro *m, MacroDef *out) {
+  out->name = m->name;
+  out->is_objlike = m->is_objlike;
+  out->is_builtin = m->handler != NULL;
+  out->va_args_name = m->va_args_name;
+  out->body = m->body;
+  out->filename = m->def_tok ? m->def_tok->filename : NULL;
+  out->line_no = m->def_tok ? m->def_tok->line_no : 0;
+
+  int n = 0;
+  for (MacroParam *p = m->params; p; p = p->next)
+    n++;
+  out->param_count = n;
+
+  if (!n) {
+    out->params = NULL;
+    return;
+  }
+  out->params = calloc(n, sizeof(char *));
+  int i = 0;
+  for (MacroParam *p = m->params; p; p = p->next)
+    out->params[i++] = p->name;
+}
+
+int macro_count(void) {
+  int n = 0;
+  for (int i = 0; i < macros.capacity; i++)
+    if (hashmap_entry_live(&macros.buckets[i]))
+      n++;
+  return n;
+}
+
+int macro_list(MacroDef *out, int cap) {
+  int n = 0;
+  for (int i = 0; i < macros.capacity && n < cap; i++) {
+    HashEntry *e = &macros.buckets[i];
+    if (!hashmap_entry_live(e))
+      continue;
+    fill_macro_def((Macro *)e->val, &out[n++]);
+  }
+  return n;
+}
+
+bool macro_lookup(char *name, MacroDef *out) {
+  Macro *m = hashmap_get(&macros, name);
+  if (!m)
+    return false;
+  fill_macro_def(m, out);
+  return true;
 }
 
 static Macro *add_builtin(char *name, macro_handler_fn *fn) {

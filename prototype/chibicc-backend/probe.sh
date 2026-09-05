@@ -36,3 +36,8 @@ for h in "$headers"/*.h; do
 done
 rm -f /tmp/probe_$$.c
 echo "=== parse: $ok/$total ==="
+
+# Macro probe:
+#   cc -std=c11 -fno-common -Ivendor -o dumpmacros dumpmacros.c \
+#      vendor/{tokenize,preprocess,hashmap,strings,unicode,type,parse}.c
+#   ./dumpmacros <header> -I$(xcrun --show-sdk-path)/usr/include

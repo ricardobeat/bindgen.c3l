@@ -51,6 +51,42 @@ So 4 of 5 are Apple extension long-tail. Each is individually small;
 the set is open-ended, which is the standing argument against small C
 frontends.
 
+## Macro introspection (resolved)
+
+The open question from the first pass was macros: chibicc kept its
+`Macro` struct private to preprocess.c, while the tool leans on
+libclang's `CURSOR_MACRO_DEFINITION` for `#define` constants, which are
+a large share of a real binding.
+
+This is now exposed and verified. `chibicc.h` gains a `MacroDef` view
+and three functions -- `macro_count`, `macro_list`, `macro_lookup` --
+that read the post-preprocessing macro table without leaking the
+internal representation.
+
+Three details that mattered:
+
+- **Tombstones.** `hashmap_delete` marks a bucket with a `TOMBSTONE`
+  sentinel rather than clearing the key, so walking buckets naively
+  resurrects `#undef`-ed macros. Added `hashmap_entry_live()` in
+  hashmap.c, since the sentinel is private there.
+- **Source location.** The macro table holds every macro from every
+  transitively included system header (467 for cJSON). `Macro` now
+  records the name token, so `MacroDef` carries `filename`/`line_no`
+  and a caller can keep only the ones from the header it asked about
+  -- 467 drops to 24 for cJSON.
+- **Bodies are unexpanded.** `cJSON_SetBoolValue`'s body comes through
+  referencing `cJSON_True`, not its expansion. That is what the current
+  tool wants: `trans::tokensUnderCursor` does its own identifier
+  translation over the raw token list.
+
+Parity check against the current libclang output for cJSON.h: chibicc
+reports all 21 macros the tool emits, plus `cJSON__h` (include guard),
+`CJSON_CDECL` and `CJSON_STDCALL` (empty platform macros). Object-like
+vs function-like, parameter lists and `__VA_ARGS__` all come through
+correctly.
+
+`dumpmacros.c` is a standalone probe that prints the table as JSON.
+
 ## What is NOT done
 
 This spike stopped at "can chibicc parse these headers". Still unbuilt:
@@ -58,10 +94,6 @@ This spike stopped at "can chibicc parse these headers". Still unbuilt:
 - the AST-dump pass (walk `Obj`/`Type`, emit JSON)
 - the C3-side consumer replacing `bindgen.c3l/src/visitors.c3` and the
   92 `clang::*` entry points the tool currently uses
-- macro handling. chibicc's `Macro` struct is internal to
-  preprocess.c and not exposed; the current tool leans on libclang's
-  `CURSOR_MACRO_DEFINITION` + `tokenize` for `#define` constants,
-  which is a large fraction of what it emits
 - Linux/Windows include-path defaults (currently hardcoded x86_64 Linux)
 
 ## Assessment
@@ -76,6 +108,11 @@ coverage. 61 lines bought 12 headers; the next 4 will each cost their
 own patch, and new SDK releases can add more. That is maintenance the
 libclang backend does not carry.
 
-Recommendation: worth continuing only if the macro story checks out.
-That is the next thing to probe, because macro constants are a large
-share of real bindings and chibicc does not currently expose them.
+Recommendation: continue. The macro story checked out, which was the
+main open risk. The remaining work is mechanical (AST dump + C3
+consumer) rather than exploratory; the standing cost is extension
+coverage, which is maintenance rather than a blocker.
+
+If the eventual goal is porting chibicc to C3, the exposed surface --
+`MacroDef`, `Type`, `Member`, `Obj`, `const_expr` -- is a reasonable
+shape to port against, since it avoids the internal representations.

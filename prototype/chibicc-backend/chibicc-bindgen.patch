@@ -1,3 +1,64 @@
+diff --git a/chibicc.h b/chibicc.h
+index f73eeec..d4642cd 100644
+--- a/chibicc.h
++++ b/chibicc.h
+@@ -118,6 +118,33 @@ void define_macro(char *name, char *buf);
+ void undef_macro(char *name);
+ Token *preprocess(Token *tok);
+ 
++// [bindgen] Macro introspection.
++//
++// A #define has no type, so a binding generator needs the macro's
++// replacement list as raw tokens and decides for itself whether it
++// looks like a constant. These expose the post-preprocessing macro
++// table (after #undef, so it is the final state) without leaking the
++// internal Macro representation.
++typedef struct {
++  char *name;
++  bool is_objlike;    // object-like (#define A 1) vs function-like
++  bool is_builtin;    // has a handler fn (__FILE__, __LINE__, ...)
++  int param_count;
++  char **params;      // param_count entries, NULL if object-like
++  char *va_args_name; // named variadic parameter, else NULL
++  Token *body;        // replacement list; NULL for an empty #define
++  char *filename;     // file the #define appeared in, NULL for builtins
++  int line_no;
++} MacroDef;
++
++// Number of macros currently defined.
++int macro_count(void);
++// Fill 'out' with up to 'cap' macros; returns the number written.
++// Order is unspecified.
++int macro_list(MacroDef *out, int cap);
++// Look up one macro by name; returns false if not defined.
++bool macro_lookup(char *name, MacroDef *out);
++
+ //
+ // parse.c
+ //
+@@ -443,6 +470,7 @@ void hashmap_put(HashMap *map, char *key, void *val);
+ void hashmap_put2(HashMap *map, char *key, int keylen, void *val);
+ void hashmap_delete(HashMap *map, char *key);
+ void hashmap_delete2(HashMap *map, char *key, int keylen);
++bool hashmap_entry_live(HashEntry *ent); // [bindgen]
+ void hashmap_test(void);
+ 
+ //
+diff --git a/hashmap.c b/hashmap.c
+index a83934d..846c68a 100644
+--- a/hashmap.c
++++ b/hashmap.c
+@@ -163,3 +163,10 @@ void hashmap_test(void) {
+   assert(hashmap_get(map, "no such key") == NULL);
+   printf("OK\n");
+ }
++
++// [bindgen] True if this bucket holds a live entry. Deletion leaves a
++// TOMBSTONE rather than clearing the key, so callers that walk buckets
++// directly must not treat one as present.
++bool hashmap_entry_live(HashEntry *ent) {
++  return ent->key && ent->key != TOMBSTONE;
++}
 diff --git a/parse.c b/parse.c
 index 6acaeb8..a7f8f20 100644
 --- a/parse.c
@@ -100,10 +161,39 @@ index 6acaeb8..a7f8f20 100644
        error_tok(ty->name_pos, "variable name omitted");
  
 diff --git a/preprocess.c b/preprocess.c
-index 2bef487..f0a27ec 100644
+index 2bef487..86ebf62 100644
 --- a/preprocess.c
 +++ b/preprocess.c
-@@ -979,6 +979,15 @@ static Token *preprocess2(Token *tok) {
+@@ -48,6 +48,7 @@ struct Macro {
+   char *va_args_name;
+   Token *body;
+   macro_handler_fn *handler;
++  Token *def_tok; // [bindgen] the name token, for source location
+ };
+ 
+ // `#if` can be nested, so we use a stack to manage nested `#if`s.
+@@ -369,6 +370,7 @@ static void read_macro_definition(Token **rest, Token *tok) {
+   if (tok->kind != TK_IDENT)
+     error_tok(tok, "macro name must be an identifier");
+   char *name = strndup(tok->loc, tok->len);
++  Token *name_tok = tok; // [bindgen] for source location
+   tok = tok->next;
+ 
+   if (!tok->has_space && equal(tok, "(")) {
+@@ -379,9 +381,11 @@ static void read_macro_definition(Token **rest, Token *tok) {
+     Macro *m = add_macro(name, false, copy_line(rest, tok));
+     m->params = params;
+     m->va_args_name = va_args_name;
++    m->def_tok = name_tok;
+   } else {
+     // Object-like macro
+-    add_macro(name, true, copy_line(rest, tok));
++    Macro *m = add_macro(name, true, copy_line(rest, tok));
++    m->def_tok = name_tok;
+   }
+ }
+ 
+@@ -979,6 +983,15 @@ static Token *preprocess2(Token *tok) {
      if (equal(tok, "error"))
        error_tok(tok, "error");
  
@@ -119,3 +209,63 @@ index 2bef487..f0a27ec 100644
      // `#`-only line is legal. It's called a null directive.
      if (tok->at_bol)
        continue;
+@@ -999,6 +1012,59 @@ void undef_macro(char *name) {
+   hashmap_delete(&macros, name);
+ }
+ 
++// [bindgen] Macro introspection. See chibicc.h.
++
++static void fill_macro_def(Macro *m, MacroDef *out) {
++  out->name = m->name;
++  out->is_objlike = m->is_objlike;
++  out->is_builtin = m->handler != NULL;
++  out->va_args_name = m->va_args_name;
++  out->body = m->body;
++  out->filename = m->def_tok ? m->def_tok->filename : NULL;
++  out->line_no = m->def_tok ? m->def_tok->line_no : 0;
++
++  int n = 0;
++  for (MacroParam *p = m->params; p; p = p->next)
++    n++;
++  out->param_count = n;
++
++  if (!n) {
++    out->params = NULL;
++    return;
++  }
++  out->params = calloc(n, sizeof(char *));
++  int i = 0;
++  for (MacroParam *p = m->params; p; p = p->next)
++    out->params[i++] = p->name;
++}
++
++int macro_count(void) {
++  int n = 0;
++  for (int i = 0; i < macros.capacity; i++)
++    if (hashmap_entry_live(&macros.buckets[i]))
++      n++;
++  return n;
++}
++
++int macro_list(MacroDef *out, int cap) {
++  int n = 0;
++  for (int i = 0; i < macros.capacity && n < cap; i++) {
++    HashEntry *e = &macros.buckets[i];
++    if (!hashmap_entry_live(e))
++      continue;
++    fill_macro_def((Macro *)e->val, &out[n++]);
++  }
++  return n;
++}
++
++bool macro_lookup(char *name, MacroDef *out) {
++  Macro *m = hashmap_get(&macros, name);
++  if (!m)
++    return false;
++  fill_macro_def(m, out);
++  return true;
++}
++
+ static Macro *add_builtin(char *name, macro_handler_fn *fn) {
+   Macro *m = add_macro(name, true, NULL);
+   m->handler = fn;

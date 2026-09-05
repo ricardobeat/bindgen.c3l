@@ -118,6 +118,33 @@ void define_macro(char *name, char *buf);
 void undef_macro(char *name);
 Token *preprocess(Token *tok);
 
+// [bindgen] Macro introspection.
+//
+// A #define has no type, so a binding generator needs the macro's
+// replacement list as raw tokens and decides for itself whether it
+// looks like a constant. These expose the post-preprocessing macro
+// table (after #undef, so it is the final state) without leaking the
+// internal Macro representation.
+typedef struct {
+  char *name;
+  bool is_objlike;    // object-like (#define A 1) vs function-like
+  bool is_builtin;    // has a handler fn (__FILE__, __LINE__, ...)
+  int param_count;
+  char **params;      // param_count entries, NULL if object-like
+  char *va_args_name; // named variadic parameter, else NULL
+  Token *body;        // replacement list; NULL for an empty #define
+  char *filename;     // file the #define appeared in, NULL for builtins
+  int line_no;
+} MacroDef;
+
+// Number of macros currently defined.
+int macro_count(void);
+// Fill 'out' with up to 'cap' macros; returns the number written.
+// Order is unspecified.
+int macro_list(MacroDef *out, int cap);
+// Look up one macro by name; returns false if not defined.
+bool macro_lookup(char *name, MacroDef *out);
+
 //
 // parse.c
 //
@@ -443,6 +470,7 @@ void hashmap_put(HashMap *map, char *key, void *val);
 void hashmap_put2(HashMap *map, char *key, int keylen, void *val);
 void hashmap_delete(HashMap *map, char *key);
 void hashmap_delete2(HashMap *map, char *key, int keylen);
+bool hashmap_entry_live(HashEntry *ent); // [bindgen]
 void hashmap_test(void);
 
 //
