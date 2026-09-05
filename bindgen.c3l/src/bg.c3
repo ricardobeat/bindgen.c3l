@@ -44,13 +44,13 @@ fn void? translateHeader(
       return bg::INVALID_ARGUMENTS~;
     }
 
-    PathPosix out_path = path::for_posix(tmem, opts.out_name)!!;
+    Path out_path = path::new(tmem, opts.out_name)!;
 
     // If there is no parent, we are in root
-    PathPosix out_parent = out_path.parent() ?? path::for_posix(tmem, "/")!!;
+    Path out_parent = out_path.parent() ?? path::new(tmem, "/")!;
 
     // Create missing directories on the path
-    path::mkdir(out_parent, recursive: true)!!;
+    path::mkdir(out_parent, recursive: true)!;
 
     out = file::open(opts.out_name, "w")!;
   };
