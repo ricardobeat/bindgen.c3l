@@ -137,10 +137,22 @@ fn String? runFrontend(
     dump.append((String)buf[:n]);
   }
 
+  // Drain stderr before joining, so the frontend's own diagnostics
+  // reach the user rather than being lost with the process.
+  DString errs;
+  errs.tinit();
+  while (true) {
+    sz? n = proc.read_stderr(&buf, buf.len);
+    if (catch n) break;
+    if (n <= 0) break;
+    errs.append((String)buf[:n]);
+  }
+
   CInt rc = proc.join()!;
   if (rc != 0) {
-    err::erro("Frontend failed on '%s' (exit %d)", header_name, rc);
-    if (!opts.skip_errors) return bg::CLANG_PARSE_ERROR~;
+    err::erro("Could not parse '%s':", header_name);
+    if (errs.len()) io::eprintn(errs.str_view());
+    return bg::CLANG_PARSE_ERROR~;
   }
 
   return dump.str_view();
