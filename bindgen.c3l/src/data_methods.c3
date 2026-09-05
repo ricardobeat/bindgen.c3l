@@ -4,8 +4,7 @@
 *>
 module bgimpl::data_methods;
 import bindgen::bg,
-       std::io,
-       clang;
+       std::io;
 
 
 fn bool BGModuleWrap.equals(
@@ -186,20 +185,8 @@ fn sz? WriteAttrs.to_format(
 }
 
 
-fn uint CXType.hash(
-  CXType t) 
-{
-  return clang::hashCursor(clang::getTypeDeclaration(t)) @inline;
-}
 
 
-fn bool CXType.equals(
-  CXType a, 
-  CXType b) 
-  @operator(==)
-{
-  return (bool)clang::equalTypes(a, b) @inline;
-}
 
 
 module std::core::array;

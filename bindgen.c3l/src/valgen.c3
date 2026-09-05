@@ -1,6 +1,6 @@
 
 module bgimpl::valgen;
-import bindgen::bg, 
+import bindgen::bg, std::io,
        bgimpl;
 
 
@@ -41,35 +41,38 @@ fn WriteAttrs getWriteAttrs(
 
 <*
  Writes a new module section for the name if needed
- to vd.out, based on vd.gen_fns.module_wrap (see BGModuleWrap docs).
- If two names in a row returned the same module wrap, new 
+ to out, based on gen_fns.module_wrap (see BGModuleWrap docs).
+ If two names in a row returned the same module wrap, new
  section is not written.
- Module section inherents name from vd.module_name.
- @param [&inout] vd
- @require vd.module_name != "" : "Module name can't be empty"
+ @param [&inout] prev : "Last module wrap written, updated in place"
+ @require module_name != "" : "Module name can't be empty"
 *>
 fn void moduleWrap(
-  GlobalVisitData* vd,
+  OutStream out,
+  WriteState* state,
+  String module_name,
+  BGGenCallbacks gen_fns,
+  BGModuleWrap* prev,
   String name)
   => @pool()
 {
-  BGModuleWrap curr = valgen::apply(tmem, name, vd.gen_fns.module_wrap);
+  BGModuleWrap curr = valgen::apply(tmem, name, gen_fns.module_wrap);
 
-  if (!curr.equals(&vd.prev_module_wrap)) {
+  if (!curr.equals(prev)) {
     WriteAttrs attrs = {
       .if_condition = curr.if_condition,
     };
 
-    wter::moduleHead(vd.out, &vd.write_state, vd.module_name, attrs);
+    wter::moduleHead(out, state, module_name, attrs);
 
     if (curr.imports != "") {
       String[] imports_arr = curr.imports.tsplit(";", skip_empty: true);
       foreach (imp : imports_arr) {
-        wter::importModule(vd.out, &vd.write_state, imp.trim());
+        wter::importModule(out, state, imp.trim());
       }
     }
 
-    vd.prev_module_wrap = curr;
+    *prev = curr;
   }
 }
 

@@ -1,7 +1,7 @@
 
 module bgimpl::err;
 import bindgen::bg, bgimpl;
-import clang, std::io;
+import std::io;
 
 
 <*

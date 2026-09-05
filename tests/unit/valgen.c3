@@ -1,9 +1,6 @@
 
 module bgimpl::valgen @test;
-import bgtest,
-       bgimpl::misc,
-       clang,
-       bindgen::bg,
+import bindgen::bg,
        std::io;
 
 
@@ -50,39 +47,37 @@ fn void test_module_wrap()
   DString out;
   out.tinit();
 
-  GlobalVisitData vd = {
-    .out = &out,
-    .module_name = "hello",
-  };
-  
+  WriteState state;
+  BGGenCallbacks gen_fns;
+  BGModuleWrap prev;
+
   const EXPECTED_1 = "";
-  moduleWrap(&vd, "name");
+  moduleWrap(&out, &state, "hello", gen_fns, &prev, "name");
   assert( out.str_view() == EXPECTED_1 );
   out.clear();
 
   const EXPECTED_2 = "";
-  vd.gen_fns.module_wrap = fn (name, alloc) => name == "name" ? {} : { .if_condition = "false" };
-  moduleWrap(&vd, "name");
+  gen_fns.module_wrap = fn (name, alloc) => name == "name" ? {} : { .if_condition = "false" };
+  moduleWrap(&out, &state, "hello", gen_fns, &prev, "name");
   assert( out.str_view() == EXPECTED_2 );
   out.clear();
 
   const EXPECTED_3 = "\nmodule hello @feat(true);\nimport vulkan;\nimport opengl;\n";
-  vd.gen_fns.module_wrap = fn (name, alloc) => { 
+  gen_fns.module_wrap = fn (name, alloc) => {
     .if_condition = "true",
     .imports = " vulkan ; opengl ",
   };
-  moduleWrap(&vd, "name");
+  moduleWrap(&out, &state, "hello", gen_fns, &prev, "name");
   assert( out.str_view() == EXPECTED_3 );
   out.clear();
 
+  // Repeating the same wrap must not emit a second module header.
   const EXPECTED_4 = "\nmodule hello;\nimport vulkan;\n";
-  vd.gen_fns.module_wrap = fn (name, alloc) => { 
+  gen_fns.module_wrap = fn (name, alloc) => {
     .imports = "vulkan",
   };
-  moduleWrap(&vd, "name");
-  moduleWrap(&vd, "name");
+  moduleWrap(&out, &state, "hello", gen_fns, &prev, "name");
+  moduleWrap(&out, &state, "hello", gen_fns, &prev, "name");
   assert( out.str_view() == EXPECTED_4 );
   out.clear();
 }
-
-

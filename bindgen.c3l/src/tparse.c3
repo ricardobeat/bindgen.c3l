@@ -5,79 +5,14 @@
  applicable form
 *>
 module bgimpl::tparse;
-import clang, 
-       bgimpl, 
+import bgimpl, 
        std::collections::list;
 
 
 faultdef INVALID_BITFIELDS;
 
 
-<*
- Converts token kind to it's representation in C3.
- If kind is represented with a run-time string, strs
- and str_index are used to retrieve this string.
-*>
-fn String convertCTypeTokenToC3(
-  CTypeTokenKind kind,
-  String[] strs,
-  usz str_index)
-  @inline
-{
-  switch (kind) {
-    case NAME:
-    case SIZED_ARRAY:
-      assert( str_index < strs.len );
-      return strs[str_index];
-    case UNSIZED_ARRAY:
-    case POINTER:
-      return "*";
-  }
-}
 
-<*
- Converts type to CTypeTokens in reversed order.
- Automatically strips all type qualifiers, like 
- "struct", "const", etc.
- Example: int[10]* -> [*, [10], int]
- @return "CTypeTokens, allocated via alloc"
-*>
-fn CTypeTokens getTypeTokens(
-  Allocator alloc, 
-  CXType type)
-{
-  CTypeTokens tokens;
-  tokens.init(alloc);
-
-  while LOOP: (true) {
-    switch (type.kind) {
-      case clang::TYPE_POINTER: 
-        tokens.push(POINTER);
-        type = clang::getPointeeType(type);
-
-      case clang::TYPE_CONSTANT_ARRAY:
-        CLongLong size = clang::getArraySize(type);
-        String str = string::format(tmem, "[%d]", size);
-        tokens.push(SIZED_ARRAY, str);
-        type = clang::getElementType(type);
-
-      case clang::TYPE_INCOMPLETE_ARRAY:
-        tokens.push(UNSIZED_ARRAY);
-        type = clang::getElementType(type);
-
-      default:
-        CXString type_spell = clang::getTypeSpelling(type);
-        defer clang::disposeString(type_spell);
-        String type_str = misc::convStr(type_spell);
-
-        type_str = type_str.strip_prefix("const ").strip_prefix("struct ").strip_prefix("enum ").strip_prefix("union ");
-        tokens.push(NAME, type_str.copy(tmem));
-        break LOOP;
-    }
-  }
-
-  return tokens;
-}
 
 
 <*
@@ -184,30 +119,5 @@ fn C3Fields? getC3Fields(
 }
 
 
-<*
- Converts cursor kind to CFieldKind
-*>
-fn CFieldKind getCFieldKind(
-  CXCursor cursor)
-{
-  CFieldKind kind;
-
-  switch (clang::getCursorKind(cursor)) {
-    case clang::CURSOR_STRUCT_DECL: 
-      kind = STRUCT;
-    case clang::CURSOR_UNION_DECL: 
-      kind = UNION;
-    case clang::CURSOR_ENUM_DECL:
-      kind = ENUM;
-    default: 
-      if (clang::getFieldDeclBitWidth(cursor) == -1) {
-        kind = NORMAL;
-      } else {
-        kind = BIT;
-      }
-  }
-
-  return kind;
-}
 
 

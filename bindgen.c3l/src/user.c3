@@ -1,80 +1,52 @@
+<*
+ Locates the platform's C headers.
 
+ The frontend carries its own stddef/stdarg/stdbool and friends, but a
+ real header will include <stdint.h>, <string.h> and the rest, which
+ belong to the platform. These are the directories the OS ships; no
+ compiler needs to be installed to read them.
+*>
 module bgimpl::user;
-import bgimpl,
-       std::os::process, 
-       std::io,
-       std::collections::list;
+import bgimpl;
+import std::collections::list, std::io, std::os::env;
 
 
 <*
- Retrieves essential command args for clang and append extra_args to it.
- @return "ZString[], which and each element of which should be then freed via alloc"
+ Directories to search for platform C headers, most specific first.
+ Only directories that exist are returned.
+ @return "List of paths, allocated via alloc"
 *>
-fn ZString[]? getParseCommandArgs(
-  Allocator alloc, 
-  String[] extra_args = {},
-  bool no_libc = false) 
-  => @pool() 
+fn String[] systemIncludePaths(Allocator alloc)
 {
-  const ADD_ARGS = 4;
+  List{String} out;
+  out.init(alloc, 4);
 
-  List{ZString} args;
-  args.tinit(extra_args.len + ADD_ARGS);
-  defer args.free();
-
-  // Just make sure that we treat a file as a C one
-  args.push("-xc");
-
-  if (!no_libc) {
-    user::includeLibcToArgs(alloc, &args)!;
+  // An explicit override always wins.
+  if (try String sdk = env::get_var(alloc, "BINDGEN_SYSROOT")) {
+    addIfDir(&out, string::format(alloc, "%s/usr/include", sdk));
   }
 
-  foreach (extra_opt : extra_args) {
-    args.push((ZString)extra_opt);
-  }
+  $if env::DARWIN:
+    // The SDK ships with the OS; its path is stable across versions.
+    addIfDir(&out, "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include");
+    addIfDir(&out, "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include");
+  $endif
 
-  return args.to_array(alloc);
+  addIfDir(&out, "/usr/local/include");
+  $if env::LINUX:
+    addIfDir(&out, "/usr/include/x86_64-linux-gnu");
+    addIfDir(&out, "/usr/include/aarch64-linux-gnu");
+  $endif
+  addIfDir(&out, "/usr/include");
+
+  return out.to_array(alloc);
 }
 
 
 <*
- Appends flags to res to locate libc headers for clang
- @param [&out] res              : "List, which will be pushed with flags"
- @require res.is_initialized()  : "List must be initialized"
+ Pushes path onto out when it names an existing directory.
 *>
-fn void? includeLibcToArgs(
-  Allocator alloc,
-  List{ZString}* res) 
-  => @pool()
+fn void addIfDir(List{String}* out, String path) @local
 {
-  Process proc = process::spawn({ "clang", "-E", "-Wp,-v", "-xc", "-" }, err: process::CAPTURE)!;
-  defer (void)proc.destroy();
-  proc.join()!;
-  File in = file::from_handle(proc.stderr_file);
-
-  bool found;
-  while (!found) {
-    if (in.read_byte()! == '\n') {
-      char[14] buffer;
-      in.read(buffer[..])!;
-      if ((String)buffer[..] == "#include <...>") {
-        while(in.read_byte()! != '\n') {}; // read till '\n'
-        found = true;
-      }
-    }
-  }
-
-  while (try first_c = in.read_byte() && first_c == ' ') {
-    DString path_dstr;
-    path_dstr.tinit();
-
-    path_dstr.append("-I");
-    while (try c = in.read_byte() && c != '\n') {
-      path_dstr.append(c);
-    }
-
-    // Append all possible headers
-    res.push(path_dstr.copy_zstr(alloc));
-  }
+  if (file::is_dir(path)) out.push(path);
 }
-

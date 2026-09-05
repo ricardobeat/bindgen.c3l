@@ -5,8 +5,7 @@ module bgimpl;
 import bindgen::bg,
        std::io, 
        std::collections::map, 
-       std::collections::list, 
-       clang;
+       std::collections::list;
 
 
 <*
@@ -82,10 +81,6 @@ enum WriteAttrKind : char (String str, bool has_arg)
 }
 
 
-<*
- Types translation table maps CXType to C3 name. 
-*>
-alias TypesTable = HashMap{CXType, String};
 
 
 <*
@@ -193,89 +188,16 @@ struct CTypeTokens
 
 
 
-<*
- Visit data, accesed from any visitor
-
- cxfile : "Used to ignore nodes from other files "
-*>
-struct GlobalVisitData
-{
-  BGTransCallbacks  trans_fns;
-  BGGenCallbacks    gen_fns;
-  BGCheckFn         include_file;
-  String            module_name;
-  BGModuleWrap      prev_module_wrap;
-
-  TypesTable        types_table;
-  OutStream         out;
-  CXFile            cxfile;
-  usz               anon_fns_counter;
-  WriteState        write_state;
-
-  bitstruct : char
-  {
-    bool            no_verbose;
-  }
-}
 
 
-<*
- allocator : "All string are allocated via it"
-*>
-struct FuncVisitData
-{
-  List{VarDecl}     params;
-  Allocator         allocator;
-  GlobalVisitData*  g;
-}
 
 
-<*
- allocator : "All string are allocated via it"
- prev_inline : "Before visiting should be set to clang::getNullCursor()"
-*>
-struct FieldsVisitData
-{
-  CXCursor          prev_inline;
-  CFields           fields;
-  Allocator         allocator;
-  GlobalVisitData*  g;
-  usz               current;
-}
 
 
-<*
- is_incomplete : "Whether the underlying type is incomplete"
-*>
-struct TypedefVisitData
-{
-  GlobalVisitData*  g;
-  CXType            under_type;
-  bool              is_incomplete;
-}
 
 
-<*
- allocator : "val is allocated via it"
-*>
-struct ConstVisitData
-{
-  String            val;
-  Allocator         allocator;
-  GlobalVisitData*  g;
-}
 
 
-<*
- allocator : "All string are allocated via it"
-*>
-struct EnumVisitData
-{
-  GlobalVisitData*  g;
-  String            enum_name;
-  bool              is_unsigned;
-  bool              is_anonymous;
-}
 
 
 <*

@@ -8,8 +8,7 @@
 module bgimpl::wter;
 import bindgen::bg, 
        bgimpl, 
-       std::io, 
-       clang;
+       std::io;
 
 
 const INDENT = "  ";

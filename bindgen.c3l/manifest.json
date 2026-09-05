@@ -1,30 +1,12 @@
 {
   "provides" : "bindgen",
   "targets" : {
-    "linux-x86" : { 
-      "linked-libraries" : [ "clang" ],
-      "sources" : [ "**" ]
-    },
-    "linux-x64" : {
-      "linked-libraries" : [ "clang" ],
-      "sources" : [ "**" ]
-    },
-    "macos-aarch64" : {
-      "linked-libraries" : [ "clang" ],
-      "link-args" : [ "-L /Library/Developer/CommandLineTools/usr/lib -rpath /Library/Developer/CommandLineTools/usr/lib" ],
-      "sources" : [ "**" ]
-    },
-    "windows-x64": {
-      "link-args": [ ],
-      "dependencies": [  ],
-      "linked-libraries": [ "libclang" ],
-      "sources" : [ "./" ]
-    },
-    "windows-aarch64": {
-      "link-args": [ ],
-      "dependencies": [  ],
-      "linked-libraries": [ "libclang" ],
-      "sources" : [ "./" ]
-    },
+    "linux-x86"       : { "sources" : [ "**" ] },
+    "linux-x64"       : { "sources" : [ "**" ] },
+    "linux-aarch64"   : { "sources" : [ "**" ] },
+    "macos-x64"       : { "sources" : [ "**" ] },
+    "macos-aarch64"   : { "sources" : [ "**" ] },
+    "windows-x64"     : { "sources" : [ "**" ] },
+    "windows-aarch64" : { "sources" : [ "**" ] },
   }
 }
