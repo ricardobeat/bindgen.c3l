@@ -127,6 +127,8 @@ macro CTypeTokens.@foreach(
 
 
 <*
+ @require $kind != NAME || val != ""        : `val must be set to "<name>" in case of $kind == NAME`
+ @require $kind != SIZED_ARRAY || val != "" : `val must be set to "[<array_size>]" in case of $kind == SIZED_ARRAY`
 *>
 macro void CTypeTokens.push(
   &self, 
@@ -205,6 +207,11 @@ module std::core::array;
 
 <*
  Returns true if predicate returns true at least one time. Returns false otherwise.
+ The predicate's parameter type is checked by the `predicate(e)` call itself.
+ @require $Typeof(arr)::kind == SLICE ||| $Typeof(arr)::kind == ARRAY : "Array must be either slice or array"
+ @require $Typeof(predicate)::kind == FUNC                            : "Predicate must be a function"
+ @require $Typeof(predicate)::returns == bool                         : "Predicate must return bool"
+ @require $Typeof(predicate)::params.len == 1                         : "Predicate must have one parameter"
 *>
 macro has(arr, predicate)
 {

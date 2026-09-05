@@ -40,6 +40,7 @@ fn ZString[]? getParseCommandArgs(
 <*
  Appends flags to res to locate libc headers for clang
  @param [&out] res              : "List, which will be pushed with flags"
+ @require res.is_initialized()  : "List must be initialized"
 *>
 fn void? includeLibcToArgs(
   Allocator alloc,

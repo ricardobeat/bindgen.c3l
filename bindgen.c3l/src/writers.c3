@@ -19,6 +19,8 @@ const INDENT = "  ";
  Aliasing typedef
  @param [&inout] out
  @param [&out]   state  : "Sets state.kind to WriteKind.ALIAS"
+ @require name            != ""
+ @require underlying_name != ""
 *>
 fn sz? typedefAlias(
   OutStream out,
@@ -40,6 +42,8 @@ fn sz? typedefAlias(
  Distinct typedef
  @param [&inout] out
  @param [&out]   state  : "Sets state.kind to WriteKind.TYPEDEF"
+ @require name            != ""
+ @require underlying_name != ""
 *>
 fn sz? typedefDistinct(
   OutStream out,
@@ -61,6 +65,9 @@ fn sz? typedefDistinct(
  Function pointer typedef
  @param [&inout] out
  @param [&out]   state                                                            : "Sets state.kind to WriteKind.ALIAS"
+ @require !array::has(params, fn bool(VarDecl e) => e.type == "" && e.name != "") : "Each parameter must have type if it has name"
+ @require name        != ""
+ @require return_type != ""
 *>
 fn sz? typedefFunc(
   OutStream out,
@@ -100,6 +107,8 @@ fn sz? typedefFunc(
  @param [&inout] out
  @param [&inout] state : "Sets state.kind to CONST"
  @param          type  : "Can be empty, for example, for macro"
+ @require name  != ""
+ @require value != ""
 *>
 fn sz? constDecl(
   OutStream out,
@@ -132,6 +141,8 @@ fn sz? constDecl(
  @param [&inout] out
  @param [&inout] state : "Sets state.kind to CONST"
  @param          value : "Can be empty"
+ @require type != ""
+ @require name != ""
 *>
 fn sz? varDecl(
   OutStream out,
@@ -160,6 +171,8 @@ fn sz? varDecl(
  Enum declaration without it's underlying constants
  @param [&inout] out
  @param [&inout] state : "Sets state.kind to ENUM"
+ @require name != ""
+ @require type != ""
 *>
 fn sz? enumDecl(
   OutStream out,
@@ -179,6 +192,10 @@ fn sz? enumDecl(
  Function declaration
  @param [&inout] out
  @param [&inout] state                                                            : "Sets state.kind to FUNC"
+ @require !array::has(params, fn bool(VarDecl e) => e.type == "" && e.name != "") : "Each parameter must have type if it has name"
+ @require return_type   != ""
+ @require original_name != ""
+ @require name          != ""
 *>
 fn sz? func(
   OutStream out,
@@ -215,6 +232,8 @@ fn sz? func(
  @param [&inout] out
  @param [&inout] state                                          : "Sets state.kind to MACRO"
  @param          body                                           : "Can be empty"
+ @require !array::has(params, fn bool(String val) => val == "") : "params can't contain empty entries"
+ @require name != ""
 *>
 fn sz? funcMacro(
   OutStream out,
@@ -250,6 +269,7 @@ fn sz? funcMacro(
  Module section statement
  @param [&inout] out
  @param [&out]   state : "Sets state.kind to WriteKind.MODULE"
+ @require module_name != ""
 *>
 fn sz? moduleHead(
   OutStream out,
@@ -268,6 +288,7 @@ fn sz? moduleHead(
  Import statemenet 
  @param [&inout] out
  @param [&out]   state : "Sets state.kind to WriteKind.IMPORT"
+ @require import_module != ""
 *>
 fn sz? importModule(
   OutStream out,

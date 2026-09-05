@@ -8,6 +8,7 @@ import bindgen::bg,
  Applies fun to a name for value generation.
  If function is null, returns the default value
  of return type.
+ @require $Typeof(fun) == BGGenFn ||| $Typeof(fun) == BGModuleWrapFn
 *>
 macro apply(
   Allocator alloc, 
@@ -45,6 +46,7 @@ fn WriteAttrs getWriteAttrs(
  section is not written.
  Module section inherents name from vd.module_name.
  @param [&inout] vd
+ @require vd.module_name != "" : "Module name can't be empty"
 *>
 fn void moduleWrap(
   GlobalVisitData* vd,

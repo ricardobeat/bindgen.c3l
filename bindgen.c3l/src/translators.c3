@@ -21,6 +21,7 @@ import bgimpl,
 
 <*
  Global variable or const declaration
+ @require clang::getCursorKind(cursor) == clang::CURSOR_VAR_DECL
 *>
 fn sz? varDecl(
   GlobalVisitData* vd,
@@ -71,6 +72,7 @@ fn sz? varDecl(
 
 <*
  Global constant declaration
+ @require clang::getCursorKind(cursor) == clang::CURSOR_VAR_DECL
 *>
 fn sz? constDecl(
   GlobalVisitData* vd, 
@@ -122,6 +124,7 @@ fn sz? constDecl(
 
 <*
  Enum declaration and all underlying constants
+ @require clang::getCursorKind(cursor) == clang::CURSOR_ENUM_DECL
 *>
 fn sz? enumDecl(
   GlobalVisitData* vd, 
@@ -193,6 +196,7 @@ fn sz? enumDecl(
 
 <*
  Function delcaration
+ @require clang::getCursorKind(cursor) == clang::CURSOR_FUNCTION_DECL
 *>
 fn sz? func(
   GlobalVisitData* vd, 
@@ -245,6 +249,7 @@ fn sz? func(
 
 <*
  Macro definition
+ @require clang::getCursorKind(cursor) == clang::CURSOR_MACRO_DEFINITION
 *>
 fn sz? macroDef(
   GlobalVisitData* vd, 
@@ -358,6 +363,7 @@ fn sz? constMacroDef(
 
 <*
  Typedef declaration
+ @require clang::getCursorKind(cursor) == clang::CURSOR_TYPEDEF_DECL
 *>
 fn sz? typedefDecl(
   GlobalVisitData* vd, 
@@ -408,6 +414,7 @@ fn sz? typedefDecl(
 
 <*
  Structure declaration
+ @require clang::getCursorKind(cursor) == clang::CURSOR_STRUCT_DECL
 *>
 fn sz? structDecl(
   GlobalVisitData* vd, 
@@ -420,6 +427,7 @@ fn sz? structDecl(
 
 <*
  Union declaration
+ @require  clang::getCursorKind(cursor) == clang::CURSOR_UNION_DECL 
 *>
 fn sz? unionDecl(
   GlobalVisitData* vd, 
